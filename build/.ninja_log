@@ -1,9 +1,15 @@
 # ninja log v6
-28	370	7884033269189651	CMakeFiles/rivet.dir/src/diag.cpp.obj	fc209e0163c41911
+367	468	7884036824575242	rivet.exe	69258e1013d9f097
+46	976	7884035128374687	CMakeFiles/rivet.dir/src/parser.cpp.obj	4ca51bf006807d75
+51	924	7884035128430047	CMakeFiles/rivet.dir/src/validate.cpp.obj	d9c099986db24153
+43	737	7884035128354580	CMakeFiles/rivet.dir/src/lexer.cpp.obj	b7feaa3a6eaf5df
+37	662	7884035128291334	CMakeFiles/rivet.dir/src/main.cpp.obj	1cc636df6edeee5
+49	495	7884035128406630	CMakeFiles/rivet.dir/src/print_ast.cpp.obj	ba113716676d1132
 25	438	7884033269166288	CMakeFiles/rivet.dir/src/source.cpp.obj	63771e86ff77ead9
-35	468	7884033269265823	CMakeFiles/rivet.dir/src/print_ast.cpp.obj	ba113716676d1132
-21	630	7884033269125436	CMakeFiles/rivet.dir/src/main.cpp.obj	1cc636df6edeee5
-30	708	7884033269221232	CMakeFiles/rivet.dir/src/lexer.cpp.obj	b7feaa3a6eaf5df
-38	874	7884033269305587	CMakeFiles/rivet.dir/src/validate.cpp.obj	d9c099986db24153
-33	949	7884033269252091	CMakeFiles/rivet.dir/src/parser.cpp.obj	4ca51bf006807d75
-950	1051	7884033278411660	rivet.exe	69258e1013d9f097
+49	366	7884036821394129	CMakeFiles/rivet.dir/src/diag.cpp.obj	fc209e0163c41911
+58	2241	7884046086442284	CMakeFiles/rivet.dir/src/lexer.cpp.obj	b7feaa3a6eaf5df
+63	2263	7884046086486043	CMakeFiles/rivet.dir/src/print_ast.cpp.obj	ba113716676d1132
+61	2356	7884046086465891	CMakeFiles/rivet.dir/src/parser.cpp.obj	4ca51bf006807d75
+66	2483	7884046086508156	CMakeFiles/rivet.dir/src/validate.cpp.obj	d9c099986db24153
+54	2514	7884046086400084	CMakeFiles/rivet.dir/src/main.cpp.obj	1cc636df6edeee5
+2515	2977	7884046111000320	rivet.exe	69258e1013d9f097

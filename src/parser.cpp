@@ -1,6 +1,6 @@
 #include "parser.hpp"
 
-#include <sstream>
+#include <string>
 
 Parser::Parser(Lexer& lex, const DiagnosticEngine& diag)
     : lex_(lex), diag_(diag) {
@@ -27,7 +27,6 @@ void Parser::skip_newlines() {
 std::string Parser::parse_ident_text(const char* msg) {
     if (cur_.kind != TokenKind::Ident) {
         diag_.error(cur_.loc, msg);
-        // consume something to avoid getting stuck
         advance();
         return {};
     }
@@ -37,10 +36,32 @@ std::string Parser::parse_ident_text(const char* msg) {
 }
 
 static std::string strip_quotes(std::string_view s) {
-    if (s.size() >= 2 && s.front() == '"' && s.back() == '"') {
+    if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
         return std::string(s.substr(1, s.size() - 2));
-    }
     return std::string(s);
+}
+
+ModeName Parser::parse_mode_name(const char* msg) {
+    ModeName m;
+    m.loc = cur_.loc;
+
+    if (cur_.kind == TokenKind::Ident) {
+        m.is_local_string = false;
+        m.text = std::string(cur_.lexeme);
+        advance();
+        return m;
+    }
+    if (cur_.kind == TokenKind::String) {
+        m.is_local_string = true;
+        m.text = strip_quotes(cur_.lexeme);
+        advance();
+        return m;
+    }
+
+    diag_.error(cur_.loc, msg);
+    advance();
+    m.text = "<error>";
+    return m;
 }
 
 bool Parser::is_reserved_mode_name(const std::string& s) const {
@@ -49,7 +70,6 @@ bool Parser::is_reserved_mode_name(const std::string& s) const {
 
 std::string Parser::parse_brace_blob() {
     if (!match(TokenKind::LBrace)) return {};
-
     std::string out = "{";
     int depth = 1;
 
@@ -66,6 +86,16 @@ std::string Parser::parse_brace_blob() {
 
     if (depth != 0) diag_.error(cur_.loc, "Unterminated '{' config block");
     return out;
+}
+
+SystemModeDecl Parser::parse_systemmode_decl() {
+    Token startTok = cur_;
+    expect(TokenKind::KwSystemMode, "Expected 'systemmode'");
+    SystemModeDecl d;
+    d.loc = startTok.loc;
+    d.name = parse_ident_text("Expected system mode name (identifier)");
+    skip_newlines();
+    return d;
 }
 
 NodeDecl Parser::parse_node_decl() {
@@ -85,7 +115,7 @@ NodeDecl Parser::parse_node_decl() {
 }
 
 Stmt Parser::parse_stmt() {
-    // Only allow function calls: Ident '(' args? ')'
+    // Only function calls for now: Ident '(' args? ')'
     if (cur_.kind != TokenKind::Ident) {
         diag_.error(cur_.loc, "Expected a statement (function call like foo(...))");
         advance();
@@ -119,7 +149,6 @@ Stmt Parser::parse_stmt() {
             (void)match(TokenKind::Comma);
             continue;
         }
-
         diag_.error(cur_.loc, "Expected argument (identifier/number/string) or ')'");
         advance();
     }
@@ -138,8 +167,8 @@ std::vector<Stmt> Parser::parse_indented_block_stmts() {
         if (match(TokenKind::Dedent)) break;
         if (match(TokenKind::Newline)) continue;
 
-        // Robustness: if lexer fails to emit DEDENT, bail when a new top-level decl starts at col 1.
-        if ((cur_.kind == TokenKind::KwMode || cur_.kind == TokenKind::KwNode) &&
+        // Robustness: if lexer misses DEDENT, bail at a new decl at col 1.
+        if ((cur_.kind == TokenKind::KwMode || cur_.kind == TokenKind::KwNode || cur_.kind == TokenKind::KwSystemMode) &&
             cur_.loc.col == 1) {
             break;
         }
@@ -161,39 +190,10 @@ ModeDecl Parser::parse_mode_decl() {
     m.node_name = parse_ident_text("Expected node name after 'mode'");
     expect(TokenKind::Arrow, "Expected '->' after node name");
 
-    // Accept IDENT (system/reserved) OR STRING (node-local)
-    m.mode_name.loc = cur_.loc;
-
-    if (cur_.kind == TokenKind::Ident) {
-        m.mode_name.is_local_string = false;
-        m.mode_name.text = std::string(cur_.lexeme);
-        advance();
-
-        // For now, IDENT modes must be reserved (until we add global mode declarations)
-        if (!is_reserved_mode_name(m.mode_name.text)) {
-            diag_.error(m.mode_name.loc,
-                        "Unknown mode name. For now, identifier modes must be one of: boot, normal, idle, fault, shutdown. Use a quoted node-local mode like \"name\" instead.");
-        }
-
-    } else if (cur_.kind == TokenKind::String) {
-        m.mode_name.is_local_string = true;
-        m.mode_name.text = strip_quotes(cur_.lexeme);
-        advance();
-
-    } else {
-        diag_.error(cur_.loc, "Expected mode name after '->' (identifier or string)");
-        advance();
-        m.mode_name.is_local_string = false;
-        m.mode_name.text = "<error>";
-    }
+    m.mode_name = parse_mode_name("Expected mode name after '->' (identifier or string)");
 
     if (match(TokenKind::KwDo)) {
-        // Delegation target remains IDENT only for now
-        m.delegate_to = parse_ident_text("Expected target mode name after 'do'");
-        if (m.delegate_to && !is_reserved_mode_name(*m.delegate_to)) {
-            diag_.error(cur_.loc,
-                        "Delegate target must be one of: boot, normal, idle, fault, shutdown (for now)");
-        }
+        m.delegate_to = parse_mode_name("Expected target mode after 'do' (identifier or string)");
         skip_newlines();
         return m;
     }
@@ -208,16 +208,11 @@ Program Parser::parse_program() {
     skip_newlines();
 
     while (cur_.kind != TokenKind::Eof) {
-        if (cur_.kind == TokenKind::KwNode) {
-            p.decls.emplace_back(parse_node_decl());
-            continue;
-        }
-        if (cur_.kind == TokenKind::KwMode) {
-            p.decls.emplace_back(parse_mode_decl());
-            continue;
-        }
+        if (cur_.kind == TokenKind::KwSystemMode) { p.decls.emplace_back(parse_systemmode_decl()); continue; }
+        if (cur_.kind == TokenKind::KwNode)       { p.decls.emplace_back(parse_node_decl()); continue; }
+        if (cur_.kind == TokenKind::KwMode)       { p.decls.emplace_back(parse_mode_decl()); continue; }
 
-        diag_.error(cur_.loc, "Expected top-level declaration: 'node' or 'mode'");
+        diag_.error(cur_.loc, "Expected top-level declaration: 'systemmode', 'node' or 'mode'");
         advance();
     }
 

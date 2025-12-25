@@ -1,0 +1,5 @@
+# Ignore everything inside the build folder
+build/*
+
+# Exception: Do not ignore rivet.exe
+!build/rivet.exe 

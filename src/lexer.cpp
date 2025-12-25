@@ -4,9 +4,10 @@
 
 static TokenKind keyword_kind(std::string_view s) {
     static const std::unordered_map<std::string_view, TokenKind> kw = {
-        {"node", TokenKind::KwNode},
-        {"mode", TokenKind::KwMode},
-        {"do",   TokenKind::KwDo},
+        {"node",       TokenKind::KwNode},
+        {"mode",       TokenKind::KwMode},
+        {"do",         TokenKind::KwDo},
+        {"systemmode", TokenKind::KwSystemMode},
     };
     auto it = kw.find(s);
     return it == kw.end() ? TokenKind::Ident : it->second;
@@ -16,12 +17,10 @@ Lexer::Lexer(const Source& src, const DiagnosticEngine& diag)
     : src_(src), diag_(diag), text_(src.text()) {}
 
 char Lexer::cur() const { return eof() ? '\0' : text_[i_]; }
-
 char Lexer::peek(int a) const {
     int j = i_ + a;
     return (j < 0 || j >= (int)text_.size()) ? '\0' : text_[j];
 }
-
 bool Lexer::eof() const { return i_ >= (int)text_.size(); }
 
 Token Lexer::make(TokenKind k, int s, int e) {
@@ -63,7 +62,6 @@ void Lexer::skip_line_comment() {
 }
 
 void Lexer::skip_block_comment() {
-    // Consume /* ... */
     i_ += 2; // consume /*
     while (!eof()) {
         if (cur() == '*' && peek(1) == '/') {
@@ -71,7 +69,7 @@ void Lexer::skip_block_comment() {
             return;
         }
         if (cur() == '\n' || cur() == '\r') {
-            emit_newline();   // keep line numbers correct
+            emit_newline();
         } else {
             i_++;
         }
@@ -81,7 +79,7 @@ void Lexer::skip_block_comment() {
 
 Token Lexer::ident() {
     int s = i_;
-    while (std::isalnum(cur()) || cur() == '_') i_++;
+    while (std::isalnum((unsigned char)cur()) || cur() == '_') i_++;
     auto t = make(TokenKind::Ident, s, i_);
     t.kind = keyword_kind(t.lexeme);
     return t;
@@ -89,7 +87,7 @@ Token Lexer::ident() {
 
 Token Lexer::number() {
     int s = i_;
-    while (std::isdigit(cur())) i_++;
+    while (std::isdigit((unsigned char)cur())) i_++;
     return make(TokenKind::Int, s, i_);
 }
 
@@ -126,7 +124,6 @@ Token Lexer::next() {
         if (!pending_.empty()) return next();
     }
 
-    // Newlines
     if (cur() == '\n' || cur() == '\r') {
         emit_newline();
         return next();
@@ -134,7 +131,7 @@ Token Lexer::next() {
 
     skip_ws();
 
-    // Comments (NEW)
+    // Comments
     if (cur() == '/' && peek(1) == '/') {
         skip_line_comment();
         return next();
@@ -144,17 +141,17 @@ Token Lexer::next() {
         return next();
     }
 
-    if (std::isalpha(cur()) || cur() == '_') return ident();
-    if (std::isdigit(cur())) return number();
+    if (std::isalpha((unsigned char)cur()) || cur() == '_') return ident();
+    if (std::isdigit((unsigned char)cur())) return number();
     if (cur() == '"') return string();
 
     int s = i_;
-    if (cur() == ':' ) { i_++; return make(TokenKind::Colon, s, i_); }
-    if (cur() == ',' ) { i_++; return make(TokenKind::Comma, s, i_); }
-    if (cur() == '(' ) { i_++; return make(TokenKind::LParen, s, i_); }
-    if (cur() == ')' ) { i_++; return make(TokenKind::RParen, s, i_); }
-    if (cur() == '{' ) { i_++; return make(TokenKind::LBrace, s, i_); }
-    if (cur() == '}' ) { i_++; return make(TokenKind::RBrace, s, i_); }
+    if (cur() == ':') { i_++; return make(TokenKind::Colon, s, i_); }
+    if (cur() == ',') { i_++; return make(TokenKind::Comma, s, i_); }
+    if (cur() == '(') { i_++; return make(TokenKind::LParen, s, i_); }
+    if (cur() == ')') { i_++; return make(TokenKind::RParen, s, i_); }
+    if (cur() == '{') { i_++; return make(TokenKind::LBrace, s, i_); }
+    if (cur() == '}') { i_++; return make(TokenKind::RBrace, s, i_); }
     if (cur() == '-' && peek(1) == '>') { i_ += 2; return make(TokenKind::Arrow, s, i_); }
 
     diag_.error(src_.loc_from_offset(i_), "Unexpected character");

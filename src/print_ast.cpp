@@ -28,39 +28,33 @@ void print_ast(const Program& program, std::ostream& os) {
         std::visit([&](auto&& x) {
             using T = std::decay_t<decltype(x)>;
 
-            if constexpr (std::is_same_v<T, NodeDecl>) {
+            if constexpr (std::is_same_v<T, SystemModeDecl>) {
+                indent(os, 1);
+                os << "SystemMode " << x.name << "\n";
+            } else if constexpr (std::is_same_v<T, NodeDecl>) {
                 indent(os, 1);
                 os << "Node name=" << x.name << " type=" << x.type_name << "\n";
                 if (!x.config_text.empty()) {
                     indent(os, 2);
                     os << "config=" << x.config_text << "\n";
                 }
-                return;
-            }
-
-            if constexpr (std::is_same_v<T, ModeDecl>) {
+            } else if constexpr (std::is_same_v<T, ModeDecl>) {
                 indent(os, 1);
                 os << "Mode " << x.node_name << "->";
-                if (x.mode_name.is_local_string) {
-                    os << "\"" << x.mode_name.text << "\"\n";
-                } else {
-                    os << x.mode_name.text << "\n";
-                }
+                if (x.mode_name.is_local_string) os << "\"" << x.mode_name.text << "\"\n";
+                else os << x.mode_name.text << "\n";
 
                 if (x.delegate_to.has_value()) {
                     indent(os, 2);
-                    os << "do " << *x.delegate_to << "\n";
+                    os << "do ";
+                    if (x.delegate_to->is_local_string) os << "\"" << x.delegate_to->text << "\"\n";
+                    else os << x.delegate_to->text << "\n";
                 } else {
                     indent(os, 2);
                     os << "body:\n";
-                    for (const auto& st : x.body) {
-                        print_stmt(st, os, 3);
-                    }
+                    for (const auto& st : x.body) print_stmt(st, os, 3);
                 }
-                return;
             }
-
-            // If you have other decl types later, they'll fall through here.
         }, d);
     }
 }

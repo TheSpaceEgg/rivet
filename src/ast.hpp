@@ -1,5 +1,6 @@
 #pragma once
 #include "source.hpp"
+
 #include <optional>
 #include <string>
 #include <variant>
@@ -7,7 +8,7 @@
 
 struct SystemModeDecl {
     SourceLoc loc{};
-    std::string name; // identifier name (no quotes)
+    std::string name; // identifier
 };
 
 struct NodeDecl {
@@ -20,27 +21,26 @@ struct NodeDecl {
 struct CallStmt {
     SourceLoc loc{};
     std::string callee;
-    std::vector<std::string> args; // raw args for now
+    std::vector<std::string> args;
 };
 
 using Stmt = std::variant<CallStmt>;
 
 struct ModeName {
-    // Exactly one of these is used:
-    bool is_local_string = false;  // true if written as "..."
-    std::string text;             // either identifier text or string contents (no quotes)
     SourceLoc loc{};
+    bool is_local_string = false; // true if written as "..."
+    std::string text;             // identifier text OR string contents without quotes
 };
 
 struct ModeDecl {
     SourceLoc loc{};
     std::string node_name;
-
     ModeName mode_name;
 
-    // Either body OR delegation
     std::vector<Stmt> body;
-    std::optional<std::string> delegate_to; // target mode (identifier only, for now)
+
+    // Delegation target can be IDENT or STRING now
+    std::optional<ModeName> delegate_to;
 };
 
 using Decl = std::variant<SystemModeDecl, NodeDecl, ModeDecl>;
