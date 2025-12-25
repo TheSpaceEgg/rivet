@@ -1,3 +1,0 @@
-C:/Users/willi/Documents/rivet/build/CMakeFiles/rivet.dir
-C:/Users/willi/Documents/rivet/build/CMakeFiles/edit_cache.dir
-C:/Users/willi/Documents/rivet/build/CMakeFiles/rebuild_cache.dir
