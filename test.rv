@@ -1,0 +1,91 @@
+// =============================================================
+// Rivet demo file: exercises everything implemented so far
+// - node declarations with config blobs
+// - mode declarations (reserved identifier modes)
+// - mode delegation: `do normal`
+// - quoted node-local mode names: imu->"calibrate"
+// - indented mode bodies with function-call statements + args
+// - line comments (//) and block comments (/* ... */)
+// =============================================================
+
+/*
+  Nodes: keep them top-level.
+  Config blocks are still treated as raw blobs by the parser.
+*/
+node imu : I2C{bus:3, addr:0x49}
+node motor : PWM{pin:12, freq:20000}
+node comms : CAN{iface:can0, bitrate:500000}
+
+// -------------------------------------------------------------
+// Reserved mode: boot
+// Body contains only function-call statements at the moment.
+// -------------------------------------------------------------
+mode imu->boot
+  initIMU()
+  setRanges(2000, 16)     // ints
+  setFilter("lowpass")    // string literal
+
+mode motor->boot
+  initMotor()
+  setLimits(0, 255)
+
+mode comms->boot
+  initCAN()
+
+// -------------------------------------------------------------
+// Reserved mode: normal
+// -------------------------------------------------------------
+mode imu->normal
+  readRaw()
+  computeOrientation()
+  publishIMU("imu/data")  // string arg
+
+mode motor->normal
+  holdSpeed(120)
+
+mode comms->normal
+  tickComms()
+
+// -------------------------------------------------------------
+// Node-local mode name using a quoted string
+// (This is NOT system-wide; only this node has it.)
+// -------------------------------------------------------------
+mode imu->"calibrate"
+  startCal()
+  sample(1000)
+  finishCal()
+
+// -------------------------------------------------------------
+// Reserved mode: idle
+// -------------------------------------------------------------
+mode imu->idle
+  sleepMs(100)
+
+mode motor->idle
+  stopMotor()
+
+mode comms->idle
+  lowPower()
+
+// -------------------------------------------------------------
+// Reserved mode: fault
+// Delegation form (no indented body)
+// -------------------------------------------------------------
+mode imu->fault do normal
+mode motor->fault do normal
+mode comms->fault do normal
+
+// -------------------------------------------------------------
+// Reserved mode: shutdown
+// Includes a block comment inside the mode.
+// -------------------------------------------------------------
+mode imu->shutdown
+  /* tidy up */
+  powerDown()
+
+mode motor->shutdown
+  stopMotor()
+  powerOff()
+
+mode comms->shutdown
+  closeCAN()
