@@ -21,6 +21,11 @@ static void print_stmt(const Stmt& stmt, std::ostream& os, int depth) {
     }, stmt);
 }
 
+static void print_modename(const ModeName& m, std::ostream& os) {
+    if (m.is_local_string) os << "\"" << m.text << "\"";
+    else os << m.text;
+}
+
 void print_ast(const Program& program, std::ostream& os) {
     os << "Program\n";
 
@@ -41,15 +46,17 @@ void print_ast(const Program& program, std::ostream& os) {
             } else if constexpr (std::is_same_v<T, ModeDecl>) {
                 indent(os, 1);
                 os << "Mode " << x.node_name << "->";
-                if (x.mode_name.is_local_string) os << "\"" << x.mode_name.text << "\"\n";
-                else os << x.mode_name.text << "\n";
+                print_modename(x.mode_name, os);
+                os << "\n";
 
                 if (x.delegate_to.has_value()) {
                     indent(os, 2);
                     os << "do ";
-                    if (x.delegate_to->is_local_string) os << "\"" << x.delegate_to->text << "\"\n";
-                    else os << x.delegate_to->text << "\n";
-                } else {
+                    print_modename(*x.delegate_to, os);
+                    os << "\n";
+                }
+
+                if (!x.body.empty()) {
                     indent(os, 2);
                     os << "body:\n";
                     for (const auto& st : x.body) print_stmt(st, os, 3);

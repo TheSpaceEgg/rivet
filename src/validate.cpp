@@ -23,7 +23,9 @@ static bool set_has(const std::unordered_set<std::string>& s, const std::string&
 bool validate_program(const Program& program, const DiagnosticEngine& diag) {
     bool ok = true;
 
-    // 1) nodes + duplicates
+    // ------------------------------------------------------------
+    // 1) Collect nodes + detect duplicates
+    // ------------------------------------------------------------
     std::unordered_map<std::string, SourceLoc> node_locs;
     for (const auto& d : program.decls) {
         if (const auto* n = std::get_if<NodeDecl>(&d)) {
@@ -36,7 +38,9 @@ bool validate_program(const Program& program, const DiagnosticEngine& diag) {
         }
     }
 
-    // 2) global/system modes
+    // ------------------------------------------------------------
+    // 2) Collect system/global modes (systemmode <ident>)
+    // ------------------------------------------------------------
     std::unordered_set<std::string> system_modes;
     for (const auto& d : program.decls) {
         if (const auto* sm = std::get_if<SystemModeDecl>(&d)) {
@@ -49,10 +53,12 @@ bool validate_program(const Program& program, const DiagnosticEngine& diag) {
         }
     }
 
-    // 3) gather per-node mode definitions and local string modes
-    // modes_by_node[node][mode_text] = ModeDecl*
+    // ------------------------------------------------------------
+    // 3) Gather mode definitions:
+    //    modes_by_node[node][mode_text] = ModeDecl*
+    //    local_modes[node] = { "calibrate", ... } for quoted modes
+    // ------------------------------------------------------------
     std::unordered_map<std::string, std::unordered_map<std::string, const ModeDecl*>> modes_by_node;
-    // local_modes[node] = set of local string modes
     std::unordered_map<std::string, std::unordered_set<std::string>> local_modes;
 
     for (const auto& d : program.decls) {
@@ -66,21 +72,23 @@ bool validate_program(const Program& program, const DiagnosticEngine& diag) {
 
         const std::string& mode_text = m->mode_name.text;
 
-        // Enforce rule:
-        // - identifier mode names must be reserved or declared systemmode
-        // - node-local modes must be quoted strings
+        // Identifier modes must be reserved or declared systemmode.
+        // String modes are node-local by definition.
         if (!m->mode_name.is_local_string) {
             if (!is_reserved_mode(mode_text) && !set_has(system_modes, mode_text)) {
                 ok = false;
-                diag.error(m->mode_name.loc,
-                           "Unknown mode '" + mode_text + "'. Declare it with 'systemmode " + mode_text +
-                           "' or use a node-local string mode: \"" + mode_text + "\"");
+                diag.error(
+                    m->mode_name.loc,
+                    "Unknown mode '" + mode_text +
+                    "'. Declare it with 'systemmode " + mode_text +
+                    "' or use a node-local string mode: \"" + mode_text + "\""
+                );
             }
         } else {
             local_modes[m->node_name].insert(mode_text);
         }
 
-        // duplicates per node+mode text
+        // Duplicate binding check per node+mode_text
         auto& by_mode = modes_by_node[m->node_name];
         if (by_mode.find(mode_text) != by_mode.end()) {
             ok = false;
@@ -90,70 +98,77 @@ bool validate_program(const Program& program, const DiagnosticEngine& diag) {
         }
     }
 
-    // 4) validate delegation targets + build for cycle checks
-    // Cycle checks are per-node through explicit do-chains.
+    // ------------------------------------------------------------
+    // 4) Validate delegation targets + cycle detection (per node)
+    // ------------------------------------------------------------
     enum class Mark { None, Visiting, Done };
 
-    for (auto& node_pair : modes_by_node) {
-        const std::string& node = node_pair.first;
-        auto& mode_map = node_pair.second;
+    for (auto node_it = modes_by_node.begin(); node_it != modes_by_node.end(); ++node_it) {
+        const std::string& node = node_it->first;
+        auto& mode_map = node_it->second;
 
-        // Validate each delegation target (resolve identifier to local string if needed)
-        for (auto& it : mode_map) {
-            const std::string& mode_name = it.first;
-            const ModeDecl* decl = it.second;
+        auto lm_it = local_modes.find(node);
+        const bool has_local = (lm_it != local_modes.end());
 
+        auto is_local_for_node = [&](const std::string& s) -> bool {
+            if (!has_local) return false;
+            return lm_it->second.find(s) != lm_it->second.end();
+        };
+
+        // ---- 4a) Validate each do-target resolves
+        for (auto it = mode_map.begin(); it != mode_map.end(); ++it) {
+            const ModeDecl* decl = it->second;
             if (!decl->delegate_to.has_value()) continue;
 
             const ModeName& tgt = *decl->delegate_to;
+            const std::string& tgt_text = tgt.text;
 
-            // Resolve target name for this node:
-            // - if quoted, it’s local and must exist for this node
-            // - if ident:
-            //     - if reserved/system: ok (may or may not be defined for this node)
-            //     - else: allow if a local string mode of same text exists for this node (your desired behaviour)
-            bool target_exists_as_local = false;
-            auto lm_it = local_modes.find(node);
-            if (lm_it != local_modes.end()) {
-                target_exists_as_local = lm_it->second.find(tgt.text) != lm_it->second.end();
+            // If target is quoted, it must exist as a local mode.
+            if (tgt.is_local_string) {
+                if (!is_local_for_node(tgt_text)) {
+                    ok = false;
+                    diag.error(tgt.loc,
+                               "Delegation target \"" + tgt_text +
+                               "\" is not a known node-local mode for '" + node + "'");
+                }
+                continue;
             }
 
-            if (tgt.is_local_string) {
-                if (!target_exists_as_local) {
-                    ok = false;
-                    diag.error(tgt.loc, "Delegation target \"" + tgt.text + "\" is not a known node-local mode for '" + node + "'");
-                }
-            } else {
-                if (!is_reserved_mode(tgt.text) && !set_has(system_modes, tgt.text) && !target_exists_as_local) {
-                    ok = false;
-                    diag.error(tgt.loc, "Delegation target '" + tgt.text + "' is not reserved, not a system mode, and not a node-local mode for '" + node + "'");
-                }
+            // If target is an identifier, accept if:
+            // - reserved
+            // - systemmode
+            // - OR a node-local mode with the same text exists (your desired behaviour)
+            if (!is_reserved_mode(tgt_text) &&
+                !set_has(system_modes, tgt_text) &&
+                !is_local_for_node(tgt_text)) {
+                ok = false;
+                diag.error(tgt.loc,
+                           "Delegation target '" + tgt_text +
+                           "' is not reserved, not a system mode, and not a node-local mode for '" + node + "'");
             }
         }
 
-        // Cycle detection (follow only edges that point to a mode *defined on this node*)
+        // ---- 4b) Cycle detection (follow edges only to modes defined on this node)
         std::unordered_map<std::string, Mark> mark;
 
-        auto resolve_for_cycle = [&](const ModeDecl* decl) -> std::string {
-            // if target is ident but matches local string mode, treat as that name
+        auto resolve_target_for_cycle = [&](const ModeDecl* decl) -> std::string {
             const ModeName& tgt = *decl->delegate_to;
-            if (!tgt.is_local_string) {
-                auto lm_it = local_modes.find(node);
-                if (lm_it != local_modes.end() && lm_it->second.find(tgt.text) != lm_it->second.end()) {
-                    return tgt.text; // local mode name
-                }
+            // If ident matches a local string mode name, treat it as that local mode.
+            if (!tgt.is_local_string && is_local_for_node(tgt.text)) {
+                return tgt.text;
             }
             return tgt.text;
         };
 
-        auto dfs = [&](auto&& self, const std::string& mode) -> void {
-            auto it = mode_map.find(mode);
+        auto dfs = [&](auto&& self, const std::string& mode_name) -> void {
+            auto it = mode_map.find(mode_name);
             if (it == mode_map.end()) return;
 
-            Mark& mk = mark[mode];
+            Mark& mk = mark[mode_name];
             if (mk == Mark::Visiting) {
                 ok = false;
-                diag.error(it->second->loc, "Circular mode delegation detected for '" + node + "->" + mode + "'");
+                diag.error(it->second->loc,
+                           "Circular mode delegation detected for '" + node + "->" + mode_name + "'");
                 return;
             }
             if (mk == Mark::Done) return;
@@ -162,17 +177,17 @@ bool validate_program(const Program& program, const DiagnosticEngine& diag) {
 
             const ModeDecl* decl = it->second;
             if (decl->delegate_to.has_value()) {
-                std::string tgt_resolved = resolve_for_cycle(decl);
-                if (mode_map.find(tgt_resolved) != mode_map.end()) {
-                    self(self, tgt_resolved);
+                std::string tgt = resolve_target_for_cycle(decl);
+                if (mode_map.find(tgt) != mode_map.end()) {
+                    self(self, tgt);
                 }
             }
 
             mk = Mark::Done;
         };
 
-        for (auto& it : mode_map) {
-            dfs(dfs, it.first);
+        for (auto it = mode_map.begin(); it != mode_map.end(); ++it) {
+            dfs(dfs, it->first);
         }
     }
 

@@ -31,5 +31,7 @@ private:
     Stmt parse_stmt();
     std::vector<Stmt> parse_indented_block_stmts();
 
-    bool is_reserved_mode_name(const std::string& s) const;
+    void skip_indented_block_recovery();
+
+    bool is_reserved_mode_name(const std::string& s) const; // (if you still have this elsewhere)
 };

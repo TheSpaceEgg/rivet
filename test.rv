@@ -8,7 +8,7 @@
 // - line comments (//) and block comments (/* ... */)
 // =============================================================
 
-systemmode survey
+systemMode survey
 
 /*
   Nodes: keep them top-level.
@@ -61,7 +61,7 @@ mode imu->"calibrate"
 // Reserved mode: idle
 // -------------------------------------------------------------
 mode imu->idle do calibrate
-  sleepMs(100)
+
 
 mode motor->idle
   stopMotor()

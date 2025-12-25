@@ -2,6 +2,12 @@
 
 #include <string>
 
+static std::string strip_quotes(std::string_view s) {
+    if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
+        return std::string(s.substr(1, s.size() - 2));
+    return std::string(s);
+}
+
 Parser::Parser(Lexer& lex, const DiagnosticEngine& diag)
     : lex_(lex), diag_(diag) {
     advance();
@@ -35,12 +41,6 @@ std::string Parser::parse_ident_text(const char* msg) {
     return s;
 }
 
-static std::string strip_quotes(std::string_view s) {
-    if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
-        return std::string(s.substr(1, s.size() - 2));
-    return std::string(s);
-}
-
 ModeName Parser::parse_mode_name(const char* msg) {
     ModeName m;
     m.loc = cur_.loc;
@@ -51,6 +51,7 @@ ModeName Parser::parse_mode_name(const char* msg) {
         advance();
         return m;
     }
+
     if (cur_.kind == TokenKind::String) {
         m.is_local_string = true;
         m.text = strip_quotes(cur_.lexeme);
@@ -60,16 +61,14 @@ ModeName Parser::parse_mode_name(const char* msg) {
 
     diag_.error(cur_.loc, msg);
     advance();
+    m.is_local_string = false;
     m.text = "<error>";
     return m;
 }
 
-bool Parser::is_reserved_mode_name(const std::string& s) const {
-    return s == "boot" || s == "normal" || s == "idle" || s == "fault" || s == "shutdown";
-}
-
 std::string Parser::parse_brace_blob() {
     if (!match(TokenKind::LBrace)) return {};
+
     std::string out = "{";
     int depth = 1;
 
@@ -90,10 +89,12 @@ std::string Parser::parse_brace_blob() {
 
 SystemModeDecl Parser::parse_systemmode_decl() {
     Token startTok = cur_;
-    expect(TokenKind::KwSystemMode, "Expected 'systemmode'");
+    expect(TokenKind::KwSystemMode, "Expected 'systemMode'");
+
     SystemModeDecl d;
     d.loc = startTok.loc;
     d.name = parse_ident_text("Expected system mode name (identifier)");
+
     skip_newlines();
     return d;
 }
@@ -149,6 +150,7 @@ Stmt Parser::parse_stmt() {
             (void)match(TokenKind::Comma);
             continue;
         }
+
         diag_.error(cur_.loc, "Expected argument (identifier/number/string) or ')'");
         advance();
     }
@@ -167,7 +169,7 @@ std::vector<Stmt> Parser::parse_indented_block_stmts() {
         if (match(TokenKind::Dedent)) break;
         if (match(TokenKind::Newline)) continue;
 
-        // Robustness: if lexer misses DEDENT, bail at a new decl at col 1.
+        // Robustness if lexer ever misses DEDENT
         if ((cur_.kind == TokenKind::KwMode || cur_.kind == TokenKind::KwNode || cur_.kind == TokenKind::KwSystemMode) &&
             cur_.loc.col == 1) {
             break;
@@ -178,6 +180,17 @@ std::vector<Stmt> Parser::parse_indented_block_stmts() {
     }
 
     return stmts;
+}
+
+// Used only for recovery when we want to *consume* an unexpected block
+void Parser::skip_indented_block_recovery() {
+    // We are currently positioned at Indent
+    if (!match(TokenKind::Indent)) return;
+
+    while (cur_.kind != TokenKind::Eof) {
+        if (match(TokenKind::Dedent)) break;
+        advance();
+    }
 }
 
 ModeDecl Parser::parse_mode_decl() {
@@ -192,12 +205,30 @@ ModeDecl Parser::parse_mode_decl() {
 
     m.mode_name = parse_mode_name("Expected mode name after '->' (identifier or string)");
 
+    // Delegation form must be single-line: no body allowed
     if (match(TokenKind::KwDo)) {
-        m.delegate_to = parse_mode_name("Expected target mode after 'do' (identifier or string)");
+        ModeName tgt = parse_mode_name("Expected target mode after 'do' (identifier or string)");
+        m.delegate_to = tgt;
+
+        // If a body follows, that is an error by language rule.
+        if (match(TokenKind::Newline)) {
+            if (cur_.kind == TokenKind::Indent) {
+                diag_.error(cur_.loc,
+                            "A 'mode ... do ...' declaration cannot have an indented body. "
+                            "Remove the body or remove 'do'.");
+                // Consume it so we don't cascade into top-level errors
+                skip_indented_block_recovery();
+            } else {
+                // allow blank lines after
+                while (match(TokenKind::Newline)) {}
+            }
+        }
+
         skip_newlines();
         return m;
     }
 
+    // Normal body-only mode
     m.body = parse_indented_block_stmts();
     skip_newlines();
     return m;
@@ -212,7 +243,7 @@ Program Parser::parse_program() {
         if (cur_.kind == TokenKind::KwNode)       { p.decls.emplace_back(parse_node_decl()); continue; }
         if (cur_.kind == TokenKind::KwMode)       { p.decls.emplace_back(parse_mode_decl()); continue; }
 
-        diag_.error(cur_.loc, "Expected top-level declaration: 'systemmode', 'node' or 'mode'");
+        diag_.error(cur_.loc, "Expected top-level declaration: 'systemMode', 'node' or 'mode'");
         advance();
     }
 

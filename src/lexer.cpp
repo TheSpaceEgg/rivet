@@ -7,7 +7,7 @@ static TokenKind keyword_kind(std::string_view s) {
         {"node",       TokenKind::KwNode},
         {"mode",       TokenKind::KwMode},
         {"do",         TokenKind::KwDo},
-        {"systemmode", TokenKind::KwSystemMode},
+        {"systemMode", TokenKind::KwSystemMode},
     };
     auto it = kw.find(s);
     return it == kw.end() ? TokenKind::Ident : it->second;
