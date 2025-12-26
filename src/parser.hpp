@@ -26,6 +26,7 @@ private:
 
     std::vector<Param> parse_decl_params();
     std::vector<std::string> parse_call_args();
+    std::vector<ExprPtr> parse_expr_call_args();
 
     std::vector<std::string> parse_print_args();
 

@@ -1,4 +1,5 @@
 #include "validate.hpp"
+#include "builtins.hpp"
 #include <unordered_map>
 #include <unordered_set>
 #include <iostream>
@@ -26,6 +27,9 @@ struct NodeSymbol {
 
 static std::unordered_map<std::string, NodeSymbol> g_nodes;
 static std::unordered_set<std::string> g_system_modes; 
+// Mode tables used for validating local/cross-node transitions.
+static std::unordered_map<std::string, std::unordered_set<std::string>> g_any_modes_by_node;
+static std::unordered_map<std::string, std::unordered_set<std::string>> g_local_modes_by_node;
 
 static bool check_types(const TypeInfo& expected, const TypeInfo& actual) {
     if (expected.base != actual.base) return false;
@@ -88,11 +92,29 @@ static std::vector<std::string> extract_interpolations(const std::string& s) {
 static void collect_symbols(const Program& p, const DiagnosticEngine& diag) {
     g_nodes.clear();
     g_system_modes.clear();
+    g_any_modes_by_node.clear();
+    g_local_modes_by_node.clear();
     
     g_system_modes.insert("Init");
     g_system_modes.insert("Normal");
     g_system_modes.insert("Shutdown");
 
+    // Pass 1: collect system modes (so we can correctly classify local modes later).
+    for (const auto& decl : p.decls) {
+        if (auto sm = std::get_if<SystemModeDecl>(&decl)) {
+            if (sm->name == "Init" || sm->name == "Normal" || sm->name == "Shutdown") {
+                diag.error(sm->loc, "System mode '" + sm->name + "' is reserved");
+            }
+            else if (g_system_modes.find(sm->name) != g_system_modes.end()) {
+                diag.error(sm->loc, "Duplicate system mode declaration '" + sm->name + "'");
+            }
+            else {
+                g_system_modes.insert(sm->name);
+            }
+        }
+    }
+
+    // Pass 2: collect nodes and function/topic symbols.
     for (const auto& decl : p.decls) {
         if (auto n = std::get_if<NodeDecl>(&decl)) {
             NodeSymbol ns;
@@ -120,16 +142,15 @@ static void collect_symbols(const Program& p, const DiagnosticEngine& diag) {
             }
             g_nodes[n->name] = ns;
         }
-        else if (auto sm = std::get_if<SystemModeDecl>(&decl)) {
-            if (sm->name == "Init" || sm->name == "Normal" || sm->name == "Shutdown") {
-                diag.error(sm->loc, "System mode '" + sm->name + "' is reserved");
-            }
-            else if (g_system_modes.find(sm->name) != g_system_modes.end()) {
-                diag.error(sm->loc, "Duplicate system mode declaration '" + sm->name + "'");
-            }
-            else {
-                g_system_modes.insert(sm->name);
-            }
+    }
+
+    // Pass 3: collect per-node mode names and classify local modes.
+    for (const auto& decl : p.decls) {
+        if (auto m = std::get_if<ModeDecl>(&decl)) {
+            g_any_modes_by_node[m->node_name].insert(m->mode_name.text);
+            bool is_local = m->mode_name.is_local_string || m->ignores_system ||
+                            (g_system_modes.find(m->mode_name.text) == g_system_modes.end());
+            if (is_local) g_local_modes_by_node[m->node_name].insert(m->mode_name.text);
         }
     }
 }
@@ -163,6 +184,84 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
                 if (itt != itn->second.topics.end()) return itt->second.type.base;
             }
             diag.error(e->loc, "Unknown identifier '" + id->name + "' in expression");
+            has_error = true;
+            return ValType::Int;
+        }
+        if (auto call = std::get_if<Expr::Call>(&e->v)) {
+            std::vector<ValType> arg_types;
+            arg_types.reserve(call->args.size());
+            for (const auto& a : call->args) {
+                arg_types.push_back(self(self, a, current_node, current_params));
+            }
+
+            // Builtins (min/max/...) live outside any node.
+            if (const BuiltinId* bid = lookup_builtin(call->callee)) {
+                auto promote_num = [&](ValType a, ValType b) {
+                    return (a == ValType::Float || b == ValType::Float) ? ValType::Float : ValType::Int;
+                };
+
+                switch (*bid) {
+                    case BuiltinId::Min:
+                    case BuiltinId::Max: {
+                        if (arg_types.size() != 2) {
+                            diag.error(e->loc, "Builtin '" + call->callee + "' expects 2 arguments");
+                            has_error = true;
+                            return ValType::Int;
+                        }
+                        if (!is_numeric(arg_types[0]) || !is_numeric(arg_types[1])) {
+                            diag.error(e->loc, "Builtin '" + call->callee + "' requires numeric arguments");
+                            has_error = true;
+                            return ValType::Int;
+                        }
+                        return promote_num(arg_types[0], arg_types[1]);
+                    }
+
+                    case BuiltinId::Clamp: {
+                        if (arg_types.size() != 3) {
+                            diag.error(e->loc, "Builtin '" + call->callee + "' expects 3 arguments");
+                            has_error = true;
+                            return ValType::Int;
+                        }
+                        if (!is_numeric(arg_types[0]) || !is_numeric(arg_types[1]) || !is_numeric(arg_types[2])) {
+                            diag.error(e->loc, "Builtin '" + call->callee + "' requires numeric arguments");
+                            has_error = true;
+                            return ValType::Int;
+                        }
+                        return promote_num(promote_num(arg_types[0], arg_types[1]), arg_types[2]);
+                    }
+                }
+            }
+
+            // Node function call expression (e.g., helper(...) used inside an if condition)
+            auto itn = g_nodes.find(current_node);
+            if (itn != g_nodes.end()) {
+                const FuncSymbol* fs = nullptr;
+                auto ip = itn->second.private_funcs.find(call->callee);
+                if (ip != itn->second.private_funcs.end()) fs = &ip->second;
+                auto iu = itn->second.public_funcs.find(call->callee);
+                if (!fs && iu != itn->second.public_funcs.end()) fs = &iu->second;
+
+                if (fs) {
+                    if (arg_types.size() != fs->param_types.size()) {
+                        diag.error(e->loc, "Argument count mismatch in call to '" + call->callee + "'. Expected " +
+                                   std::to_string(fs->param_types.size()) + ", got " + std::to_string(arg_types.size()));
+                        has_error = true;
+                        return fs->return_type.base;
+                    }
+                    for (size_t i = 0; i < arg_types.size() && i < fs->param_types.size(); ++i) {
+                        ValType expected = fs->param_types[i].base;
+                        ValType actual = arg_types[i];
+                        bool ok = (expected == actual) || (expected == ValType::Float && actual == ValType::Int);
+                        if (!ok) {
+                            diag.error(e->loc, "Type mismatch in call to '" + call->callee + "' argument " + std::to_string(i) + "");
+                            has_error = true;
+                        }
+                    }
+                    return fs->return_type.base;
+                }
+            }
+
+            diag.error(e->loc, "Unknown function '" + call->callee + "' in expression");
             has_error = true;
             return ValType::Int;
         }
@@ -206,9 +305,12 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
                 }
                 case BinaryOp::Eq:
                 case BinaryOp::Neq: {
+                    // Allow numeric equality across int/float with implicit promotion.
                     if (lt != rt) {
-                        diag.error(e->loc, "Equality operator requires operands of the same type");
-                        has_error = true;
+                        if (!(is_numeric(lt) && is_numeric(rt))) {
+                            diag.error(e->loc, "Equality operator requires operands of compatible types");
+                            has_error = true;
+                        }
                     }
                     return ValType::Bool;
                 }
@@ -321,15 +423,47 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
 
             if (auto trans = std::get_if<TransitionStmt>(&sp->v)) {
                 if (trans->is_system) {
-                    if (g_nodes.find(current_node) != g_nodes.end()) {
-                        auto& node_sym = g_nodes[current_node];
-                        if (!node_sym.is_controller) {
-                            diag.error(trans->loc, "Node '" + current_node + "' is not a Controller. It cannot perform System Transitions.");
-                            has_error = true;
-                        }
+                    // System transitions require a controller and must target a declared systemMode.
+                    auto itn = g_nodes.find(current_node);
+                    if (itn != g_nodes.end() && !itn->second.is_controller) {
+                        diag.error(trans->loc, "Node '" + current_node + "' is not a Controller. It cannot perform System Transitions.");
+                        has_error = true;
                     }
                     if (g_system_modes.find(trans->target_state) == g_system_modes.end()) {
                         diag.error(trans->loc, "Unknown system mode '" + trans->target_state + "'");
+                        has_error = true;
+                    }
+                } else {
+                    // Local / cross-node transitions.
+                    std::string target_node = trans->target_node.empty() ? current_node : trans->target_node;
+
+                    // Cross-node transitions are restricted to controllers.
+                    if (!trans->target_node.empty()) {
+                        auto itn = g_nodes.find(current_node);
+                        if (itn != g_nodes.end() && !itn->second.is_controller) {
+                            diag.error(trans->loc, "Node '" + current_node + "' is not a Controller. It cannot transition other nodes.");
+                            has_error = true;
+                        }
+                    }
+
+                    // Target node must exist.
+                    if (g_nodes.find(target_node) == g_nodes.end()) {
+                        diag.error(trans->loc, "Unknown target node '" + target_node + "' in transition");
+                        has_error = true;
+                        continue;
+                    }
+
+                    // Target state must be a known *local* mode for that node.
+                    auto itset = g_local_modes_by_node.find(target_node);
+                    bool ok = (itset != g_local_modes_by_node.end() &&
+                               itset->second.find(trans->target_state) != itset->second.end());
+                    if (!ok) {
+                        if (g_system_modes.find(trans->target_state) != g_system_modes.end()) {
+                            diag.error(trans->loc,
+                                       "'" + trans->target_state + "' is a system mode. Use 'transition system \"" + trans->target_state + "\"' (or mark the mode 'ignore system')");
+                        } else {
+                            diag.error(trans->loc, "Unknown local mode '" + trans->target_state + "' for node '" + target_node + "'");
+                        }
                         has_error = true;
                     }
                 }

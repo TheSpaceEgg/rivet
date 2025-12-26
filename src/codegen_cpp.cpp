@@ -3,6 +3,7 @@
 #include <string>
 #include <regex>
 #include <sstream>
+#include <unordered_set>
 
 const char* RIVET_RUNTIME = R"(
 #include <iostream>
@@ -116,6 +117,75 @@ static void gen_expr(const ExprPtr& e, std::ostream& os) {
         os << id->name;
         return;
     }
+    if (auto call = std::get_if<Expr::Call>(&e->v)) {
+            // Builtins: emit directly.
+            if (call->callee == "min" || call->callee == "max") {
+                const char* fn = call->callee == "min" ? "std::min" : "std::max";
+                os << fn << "<double>(";
+                if (call->args.size() >= 1) {
+                    os << "(double)(";
+                    gen_expr(call->args[0], os);
+                    os << ")";
+                } else {
+                    os << "(double)0";
+                }
+                os << ", ";
+                if (call->args.size() >= 2) {
+                    os << "(double)(";
+                    gen_expr(call->args[1], os);
+                    os << ")";
+                } else {
+                    os << "(double)0";
+                }
+                os << ")";
+                return;
+            }
+
+            if (call->callee == "clamp") {
+                os << "std::clamp<double>(";
+
+                if (call->args.size() >= 1) {
+                    os << "(double)(";
+                    gen_expr(call->args[0], os);
+                    os << ")";
+                } else {
+                    os << "(double)0";
+                }
+
+                os << ", ";
+
+                if (call->args.size() >= 2) {
+                    os << "(double)(";
+                    gen_expr(call->args[1], os);
+                    os << ")";
+                } else {
+                    os << "(double)0";
+                }
+
+                os << ", ";
+
+                if (call->args.size() >= 3) {
+                    os << "(double)(";
+                    gen_expr(call->args[2], os);
+                    os << ")";
+                } else {
+                    os << "(double)0";
+                }
+
+                os << ")";
+                return;
+            }
+
+            // Default: emit as a normal call expression.
+            os << call->callee << "(";
+            for (size_t i = 0; i < call->args.size(); ++i) {
+                if (i) os << ", ";
+                gen_expr(call->args[i], os);
+            }
+            os << ")";
+            return;
+        }
+
     if (auto un = std::get_if<Expr::Unary>(&e->v)) {
         os << "(";
         if (un->op == UnaryOp::Not) os << "!";
@@ -207,8 +277,13 @@ static void gen_stmts(const std::vector<StmtPtr>& stmts, std::ostream& os, int d
         } else if (auto pub = std::get_if<PublishStmt>(&sp->v)) {
             os << "this->" << pub->topic_handle << ".publish(" << pub->value << ");\n";
         } else if (auto tr = std::get_if<TransitionStmt>(&sp->v)) {
-            if (tr->is_system) os << "SystemManager::set_mode(\"" << tr->target_state << "\");\n";
-            else os << "this->current_state = \"" << tr->target_state << "\";\n";
+            if (tr->is_system) {
+                os << "SystemManager::set_mode(\"" << tr->target_state << "\");\n";
+            } else if (!tr->target_node.empty()) {
+                os << tr->target_node << "_inst->set_state(\"" << tr->target_state << "\");\n";
+            } else {
+                os << "this->set_state(\"" << tr->target_state << "\");\n";
+            }
         } else if (auto req = std::get_if<RequestStmt>(&sp->v)) {
             os << req->target_node << "_inst->" << req->func_name << "(";
             for (size_t i = 0; i < req->args.size(); ++i) os << (i > 0 ? ", " : "") << req->args[i];
@@ -224,34 +299,22 @@ static void gen_stmts(const std::vector<StmtPtr>& stmts, std::ostream& os, int d
 }
 
 void generate_cpp(const Program& p, std::ostream& os) {
+    std::unordered_set<std::string> system_modes;
+    for (const auto& d : p.decls) {
+        if (auto sm = std::get_if<SystemModeDecl>(&d)) system_modes.insert(sm->name);
+    }
+
     os << RIVET_RUNTIME << "\n";
     for (const auto& decl : p.decls) {
         if (auto n = std::get_if<NodeDecl>(&decl)) {
             os << "class " << n->name << ";\nextern " << n->name << "* " << n->name << "_inst;\n";
         }
     }
+    // Pass 1: class declarations (no method bodies). This avoids C++ incomplete-type
+    // issues when one node calls into another node declared later.
     for (const auto& decl : p.decls) {
         if (auto n = std::get_if<NodeDecl>(&decl)) {
-            os << "\nclass " << n->name << " {\npublic:\n";
-            os << "    std::string name = \"" << n->name << "\";\n";
-            os << "    std::string current_state = \"Init\";\n";
-            for (const auto& t : n->topics) os << "    Topic<" << to_cpp_type(t.type) << "> " << t.name << ";\n";
-            auto gen_func = [&](const FuncSignature& sig, const std::vector<StmtPtr>& body) {
-                os << "    " << to_cpp_type(sig.return_type) << " " << sig.name << "(";
-                for (size_t i=0; i<sig.params.size(); ++i) 
-                    os << (i>0?", ":"") << to_cpp_type(sig.params[i].type) << " " << sig.params[i].name;
-                os << ") {\n"; gen_stmts(body, os, 2); 
-                bool has_return = false;
-                for (const auto& st : body) {
-                    if (st && std::holds_alternative<ReturnStmt>(st->v)) { has_return = true; break; }
-                }
-                if (sig.return_type.base == ValType::Bool && !has_return) os << "        return true;\n";
-                os << "    }\n";
-            };
-            for (const auto& r : n->requests) gen_func(r.sig, r.body);
-            for (const auto& f : n->private_funcs) gen_func(f.sig, f.body);
-            // Collect mode declarations for this node (used for mode-scoped listeners
-            // and for enforcing 'ignore system' semantics).
+            // Collect mode declarations for this node so we can declare subscription handles.
             std::vector<const ModeDecl*> node_modes;
             node_modes.reserve(p.decls.size());
             for (const auto& d2 : p.decls) {
@@ -259,6 +322,74 @@ void generate_cpp(const Program& p, std::ostream& os) {
                     if (m2->node_name == n->name) node_modes.push_back(m2);
                 }
             }
+
+            auto sub_name = [&](int mi, int li) {
+                return std::string("__rivet_sub_m") + std::to_string(mi) + "_l" + std::to_string(li);
+            };
+
+            os << "\nclass " << n->name << " {\npublic:\n";
+            os << "    std::string name = \"" << n->name << "\";\n";
+            os << "    std::string current_state = \"Init\";\n";
+            for (const auto& t : n->topics) os << "    Topic<" << to_cpp_type(t.type) << "> " << t.name << ";\n";
+
+            // Mode-scoped subscription handles (for onListen inside mode blocks)
+            for (int mi = 0; mi < (int)node_modes.size(); ++mi) {
+                for (int li = 0; li < (int)node_modes[mi]->listeners.size(); ++li) {
+                    os << "    int " << sub_name(mi, li) << " = -1;\n";
+                }
+            }
+
+            // Requests + functions
+            auto decl_func = [&](const FuncSignature& sig) {
+                os << "    " << to_cpp_type(sig.return_type) << " " << sig.name << "(";
+                for (size_t i = 0; i < sig.params.size(); ++i) {
+                    if (i) os << ", ";
+                    os << to_cpp_type(sig.params[i].type) << " " << sig.params[i].name;
+                }
+                os << ");\n";
+            };
+            for (const auto& r : n->requests) decl_func(r.sig);
+            for (const auto& f : n->private_funcs) decl_func(f.sig);
+
+            // Lifecycle / transition hooks
+            os << "    void init();\n";
+            os << "    void onSystemChange(std::string sys_mode);\n";
+            os << "    void onLocalChange();\n";
+            os << "    void set_state(const std::string& st);\n";
+            os << "    void __rivet_unsub_sys_listeners();\n";
+            os << "    void __rivet_unsub_local_listeners();\n";
+
+            os << "};\n";
+            os << n->name << "* " << n->name << "_inst = nullptr;\n";
+        }
+    }
+
+    // Pass 2: method definitions (after all classes exist).
+    for (const auto& decl : p.decls) {
+        if (auto n = std::get_if<NodeDecl>(&decl)) {
+            // Collect mode declarations for this node.
+            std::vector<const ModeDecl*> node_modes;
+            node_modes.reserve(p.decls.size());
+            for (const auto& d2 : p.decls) {
+                if (auto m2 = std::get_if<ModeDecl>(&d2)) {
+                    if (m2->node_name == n->name) node_modes.push_back(m2);
+                }
+            }
+
+            auto is_system_mode = [&](const ModeDecl* m) -> bool {
+                if (!m) return false;
+                if (m->mode_name.text == "Init") return false;
+                if (m->mode_name.is_local_string) return false;
+                if (m->ignores_system) return false;
+                return system_modes.find(m->mode_name.text) != system_modes.end();
+            };
+            auto is_local_mode = [&](const ModeDecl* m) -> bool {
+                if (!m) return false;
+                if (m->mode_name.text == "Init") return false;
+                if (m->mode_name.is_local_string) return true;
+                if (m->ignores_system) return true;
+                return system_modes.find(m->mode_name.text) == system_modes.end();
+            };
 
             auto sub_name = [&](int mi, int li) {
                 return std::string("__rivet_sub_m") + std::to_string(mi) + "_l" + std::to_string(li);
@@ -287,47 +418,59 @@ void generate_cpp(const Program& p, std::ostream& os) {
                 os << "});\n";
             };
 
-            // Mode-scoped subscription handles (for onListen inside mode blocks)
-            for (int mi = 0; mi < (int)node_modes.size(); ++mi) {
-                for (int li = 0; li < (int)node_modes[mi]->listeners.size(); ++li) {
-                    os << "    int " << sub_name(mi, li) << " = -1;\n";
+            auto gen_method = [&](const FuncSignature& sig, const std::vector<StmtPtr>& body) {
+                os << "\n" << to_cpp_type(sig.return_type) << " " << n->name << "::" << sig.name << "(";
+                for (size_t i = 0; i < sig.params.size(); ++i) {
+                    if (i) os << ", ";
+                    os << to_cpp_type(sig.params[i].type) << " " << sig.params[i].name;
                 }
-            }
+                os << ") {\n";
+                gen_stmts(body, os, 1);
+                bool has_return = false;
+                for (const auto& st : body) {
+                    if (st && std::holds_alternative<ReturnStmt>(st->v)) { has_return = true; break; }
+                }
+                if (sig.return_type.base == ValType::Bool && !has_return) os << "    return true;\n";
+                os << "}\n";
+            };
+            for (const auto& r : n->requests) gen_method(r.sig, r.body);
+            for (const auto& f : n->private_funcs) gen_method(f.sig, f.body);
 
-            os << "    void __rivet_unsub_sys_listeners() {\n";
+            // Unsubscribe helpers
+            os << "\nvoid " << n->name << "::__rivet_unsub_sys_listeners() {\n";
             for (int mi = 0; mi < (int)node_modes.size(); ++mi) {
                 const auto* m = node_modes[mi];
-                if (m->ignores_system) continue;
+                if (!is_system_mode(m)) continue;
                 for (int li = 0; li < (int)m->listeners.size(); ++li) {
                     const auto& l = m->listeners[li];
                     std::string src = l.source_node.empty() ? n->name : l.source_node;
                     std::string sub = sub_name(mi, li);
-                    os << "        if (" << sub << " != -1) { "
+                    os << "    if (" << sub << " != -1) { "
                        << src << "_inst->" << l.topic_name << ".unsubscribe(" << sub << "); "
                        << sub << " = -1; }\n";
                 }
             }
-            os << "    }\n";
+            os << "}\n";
 
-            os << "    void __rivet_unsub_local_listeners() {\n";
+            os << "\nvoid " << n->name << "::__rivet_unsub_local_listeners() {\n";
             for (int mi = 0; mi < (int)node_modes.size(); ++mi) {
                 const auto* m = node_modes[mi];
-                if (!m->ignores_system) continue;
+                if (!is_local_mode(m)) continue;
                 for (int li = 0; li < (int)m->listeners.size(); ++li) {
                     const auto& l = m->listeners[li];
                     std::string src = l.source_node.empty() ? n->name : l.source_node;
                     std::string sub = sub_name(mi, li);
-                    os << "        if (" << sub << " != -1) { "
+                    os << "    if (" << sub << " != -1) { "
                        << src << "_inst->" << l.topic_name << ".unsubscribe(" << sub << "); "
                        << sub << " = -1; }\n";
                 }
             }
-            os << "    }\n";
+            os << "}\n";
 
-            // Init runs once at startup.
-            os << "    void init() {\n";
-            os << "        this->__rivet_unsub_sys_listeners();\n";
-            os << "        this->__rivet_unsub_local_listeners();\n";
+            // init
+            os << "\nvoid " << n->name << "::init() {\n";
+            os << "    this->__rivet_unsub_sys_listeners();\n";
+            os << "    this->__rivet_unsub_local_listeners();\n";
             for (int mi = 0; mi < (int)node_modes.size(); ++mi) {
                 const auto* m = node_modes[mi];
                 if (m->mode_name.text != "Init") continue;
@@ -336,46 +479,48 @@ void generate_cpp(const Program& p, std::ostream& os) {
                 }
                 gen_stmts(m->body, os, 2);
             }
-            os << "    }\n";
+            os << "}\n";
 
-            // System transitions dispatch to non-ignored system modes.
-            os << "    void onSystemChange(std::string sys_mode) {\n";
+            // system change
+            os << "\nvoid " << n->name << "::onSystemChange(std::string sys_mode) {\n";
             if (n->ignores_system) {
-                os << "        (void)sys_mode;\n";
-                os << "        return;\n";
+                os << "    (void)sys_mode;\n";
+                os << "    return;\n";
             } else {
-                os << "        this->__rivet_unsub_sys_listeners();\n";
+                os << "    this->__rivet_unsub_sys_listeners();\n";
                 for (int mi = 0; mi < (int)node_modes.size(); ++mi) {
                     const auto* m = node_modes[mi];
-                    if (m->ignores_system) continue;
-                    if (m->mode_name.text == "Init") continue;
-                    os << "        if (sys_mode == \"" << m->mode_name.text << "\") {\n";
+                    if (!is_system_mode(m)) continue;
+                    os << "    if (sys_mode == \"" << m->mode_name.text << "\") {\n";
                     for (int li = 0; li < (int)m->listeners.size(); ++li) {
-                        emit_subscribe(n->name, m->listeners[li], sub_name(mi, li), 3);
+                        emit_subscribe(n->name, m->listeners[li], sub_name(mi, li), 2);
                     }
-                    gen_stmts(m->body, os, 3);
-                    os << "        }\n";
+                    gen_stmts(m->body, os, 2);
+                    os << "    }\n";
                 }
             }
-            os << "    }\n";
+            os << "}\n";
 
-            // Local transitions dispatch to 'ignore system' modes.
-            os << "    void onLocalChange() {\n";
-            os << "        this->__rivet_unsub_local_listeners();\n";
+            // local change
+            os << "\nvoid " << n->name << "::onLocalChange() {\n";
+            os << "    this->__rivet_unsub_local_listeners();\n";
             for (int mi = 0; mi < (int)node_modes.size(); ++mi) {
                 const auto* m = node_modes[mi];
-                if (!m->ignores_system) continue;
-                os << "        if (this->current_state == \"" << m->mode_name.text << "\") {\n";
+                if (!is_local_mode(m)) continue;
+                os << "    if (this->current_state == \"" << m->mode_name.text << "\") {\n";
                 for (int li = 0; li < (int)m->listeners.size(); ++li) {
-                    emit_subscribe(n->name, m->listeners[li], sub_name(mi, li), 3);
+                    emit_subscribe(n->name, m->listeners[li], sub_name(mi, li), 2);
                 }
-                gen_stmts(m->body, os, 3);
-                os << "        }\n";
+                gen_stmts(m->body, os, 2);
+                os << "    }\n";
             }
-            os << "    }\n";
+            os << "}\n";
 
-            os << "};\n";
-            os << n->name << "* " << n->name << "_inst = nullptr;\n";
+            // set_state
+            os << "\nvoid " << n->name << "::set_state(const std::string& st) {\n";
+            os << "    this->current_state = st;\n";
+            os << "    this->onLocalChange();\n";
+            os << "}\n";
         }
     }
     os << "\nint main() {\n";

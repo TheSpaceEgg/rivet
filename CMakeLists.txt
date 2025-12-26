@@ -14,6 +14,7 @@ add_executable(rivet
   src/validate.cpp
   src/graphviz.cpp
   src/codegen_cpp.cpp
+  src/builtins.cpp
 )
 
 if (MINGW)

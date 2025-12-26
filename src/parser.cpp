@@ -110,6 +110,19 @@ std::vector<std::string> Parser::parse_call_args() {
     return args;
 }
 
+std::vector<ExprPtr> Parser::parse_expr_call_args() {
+    std::vector<ExprPtr> args;
+    expect(TokenKind::LParen, "Expected '('");
+    if (cur_.kind != TokenKind::RParen) {
+        while (true) {
+            args.push_back(parse_expr(0));
+            if (!match(TokenKind::Comma)) break;
+        }
+    }
+    expect(TokenKind::RParen, "Expected ')'");
+    return args;
+}
+
 std::vector<std::string> Parser::parse_print_args() {
     std::vector<std::string> args;
     
@@ -202,8 +215,20 @@ ExprPtr Parser::parse_primary() {
         return e;
     }
     if (cur_.kind == TokenKind::Ident) {
-        Expr::Ident id{std::string(cur_.lexeme)};
+        std::string name = std::string(cur_.lexeme);
         advance();
+
+        // Function-style call expression: ident '(' ... ')'
+        if (cur_.kind == TokenKind::LParen) {
+            Expr::Call c;
+            c.callee = std::move(name);
+            c.args = parse_expr_call_args();
+            auto e = std::make_shared<Expr>();
+            e->loc = loc; e->v = std::move(c);
+            return e;
+        }
+
+        Expr::Ident id{std::move(name)};
         auto e = std::make_shared<Expr>();
         e->loc = loc; e->v = std::move(id);
         return e;
@@ -541,9 +566,42 @@ std::optional<StmtPtr> Parser::parse_stmt() {
         TransitionStmt t;
         t.loc = cur_.loc;
         advance();
-        if (match(TokenKind::KwSystem)) t.is_system = true;
-        if (cur_.kind == TokenKind::String) { t.target_state = strip_quotes(cur_.lexeme); advance(); }
-        else { t.target_state = parse_ident_text("Expected state"); }
+        if (match(TokenKind::KwSystem)) {
+            t.is_system = true;
+            if (cur_.kind == TokenKind::String) { t.target_state = strip_quotes(cur_.lexeme); advance(); }
+            else { t.target_state = parse_ident_text("Expected system state"); }
+            return wrap_stmt(std::move(t));
+        }
+
+        // Local or cross-node transition.
+        //   transition "mode"              -> local
+        //   transition ModeName              -> local
+        //   transition OtherNode "mode"     -> cross-node
+        //   transition OtherNode ModeName     -> cross-node
+        if (cur_.kind == TokenKind::String) {
+            t.target_state = strip_quotes(cur_.lexeme);
+            advance();
+            return wrap_stmt(std::move(t));
+        }
+
+        // If we see an identifier, it could be either:
+        //   - the target state (local), OR
+        //   - the target node (cross-node) if another token follows for the state.
+        std::string first = parse_ident_text("Expected state or node");
+        if (cur_.kind == TokenKind::String) {
+            t.target_node = first;
+            t.target_state = strip_quotes(cur_.lexeme);
+            advance();
+            return wrap_stmt(std::move(t));
+        }
+        if (cur_.kind == TokenKind::Ident) {
+            // Cross-node form.
+            t.target_node = first;
+            t.target_state = parse_ident_text("Expected state");
+            return wrap_stmt(std::move(t));
+        }
+        // Local form.
+        t.target_state = first;
         return wrap_stmt(std::move(t));
     }
     if (cur_.kind == TokenKind::Ident) {

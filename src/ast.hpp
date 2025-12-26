@@ -53,11 +53,15 @@ struct Expr {
         std::string text; // token text (strings include quotes)
     };
     struct Ident { std::string name; };
+    struct Call {
+        std::string callee;
+        std::vector<ExprPtr> args;
+    };
     struct Unary { UnaryOp op{}; ExprPtr rhs; };
     struct Binary { BinaryOp op{}; ExprPtr lhs; ExprPtr rhs; };
 
     SourceLoc loc{};
-    std::variant<Literal, Ident, Unary, Binary> v = Literal{};
+    std::variant<Literal, Ident, Call, Unary, Binary> v = Literal{};
 };
 
 // ----------------------------
@@ -92,6 +96,9 @@ struct ReturnStmt {
 struct TransitionStmt {
     SourceLoc loc{};
     bool is_system = false;
+    // For local (non-system) transitions, empty means "this" node.
+    // When set, this is a cross-node transition: transition <target_node> <state>.
+    std::string target_node;
     std::string target_state;
 };
 

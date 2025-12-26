@@ -1,180 +1,439 @@
 systemMode Startup
 systemMode Active
-
-/* Conditional + expression test.
-   Goals:
-   - if / elif / else blocks
-   - comparisons: == != < <= > >=
-   - boolean ops: and or not
-   - precedence + parentheses
-   - arithmetic: + - * / %
-   - nested ifs
-*/
+systemMode Diagnostics
+systemMode Safe
 
 node controller CommandCenter : GroundControl
-  topic system_ready = "sys/ready" : bool
+  topic hb    = "sys/hb"    : int
+  topic ready = "sys/ready" : bool
+  topic gate  = "sys/gate"  : bool
+  topic ping  = "sys/ping"  : int
+  topic fping = "sys/fping" : float
+  topic msg   = "sys/msg"   : string
+  topic stage = "sys/stage" : int
 
-  onRequest activate() -> bool
-    log info "CommandCenter.activate()"
+  onRequest boot() -> bool
+    log info "CommandCenter.boot()"
     transition system "Startup"
     return true
 
-node SensorArray : DataCollector
-  topic reading = "sense/val" : float
-  topic ok = "sense/ok" : bool
+  onRequest toActive() -> bool
+    log warn "CommandCenter.toActive()"
+    transition system "Active"
+    return true
 
-  onListen CommandCenter.system_ready do beginSampling()
+  onRequest toDiag() -> bool
+    log info "CommandCenter.toDiag()"
+    transition system "Diagnostics"
+    return true
 
-  func beginSampling(ready: bool) -> bool
-    log info "SensorArray.beginSampling() ready={ready}"
+  onRequest toSafe() -> bool
+    log error "CommandCenter.toSafe()"
+    transition system "Safe"
+    return true
 
-    // Publish a value so LoggerNode can see something too
-    reading.publish(47.0)
+  onRequest flipGate(on: bool) -> bool
+    log debug "CommandCenter.flipGate(on={on})"
+    gate.publish(on)
+    return true
 
-    // ---- Conditionals start here ----
 
-    // 1) Basic bool literal / not
-    if true:
-      log debug "if true: PASS"
+node MathHarness : DataCollector
+  topic done  = "math/done"  : bool
+  topic score = "math/score" : int
+
+  onListen CommandCenter.ready do onReady()
+  onListen CommandCenter.ping  do onPing()
+  onListen CommandCenter.fping do onFloatPing()
+  onListen CommandCenter.stage do onStage()
+  onListen CommandCenter.msg   do onSysMsg()
+
+  func onReady(v: bool) -> bool
+    log info "MathHarness.onReady(v={v})"
+
+    if v:
+      log debug "READY true -> running full test battery"
+
+      call testBooleans()
+      call testArithmetic()
+      call testBuiltins()
+
+      log info "MathHarness: tests complete"
+      done.publish(true)
     else:
-      log error "if true: FAIL"
+      log error "READY false (unexpected)"
+    return true
+
+  func testBooleans() -> bool
+    log info "TEST: booleans + precedence"
+
+    if true:
+      log debug "if true PASS"
+    else:
+      log error "if true FAIL"
 
     if not false:
-      log debug "if not false: PASS"
+      log debug "not false PASS"
     else:
-      log error "if not false: FAIL"
+      log error "not false FAIL"
 
-    // 2) Identifier bool + not
-    if ready:
-      log info "ready is true"
+    if true or (false and false):
+      log debug "true or (false and false) PASS"
     else:
-      log warn "ready is false (unexpected in this script)"
+      log error "precedence FAIL (case 1)"
 
-    if not ready:
-      log error "not ready branch should not run"
+    if false or true and false:
+      log debug "false or true and false => false PASS"
     else:
-      log debug "not ready correctly skipped"
+      log error "precedence FAIL (case 2)"
 
-    // 3) Comparisons on numbers
-    if 1 < 2:
-      log debug "1 < 2 PASS"
+    if (not true) or true:
+      log debug "(not true) or true PASS"
     else:
-      log error "1 < 2 FAIL"
+      log error "(not true) or true FAIL"
 
-    if 2 <= 2:
-      log debug "2 <= 2 PASS"
+    if not (true and false):
+      log debug "not (true and false) PASS"
     else:
-      log error "2 <= 2 FAIL"
+      log error "not (true and false) FAIL"
 
-    if 3 > 4:
-      log error "3 > 4 should be false"
+    if (true and true) and (true or false):
+      log debug "compound boolean PASS"
     else:
-      log debug "3 > 4 correctly false"
+      log error "compound boolean FAIL"
 
-    if 5 >= 5:
-      log debug "5 >= 5 PASS"
-    else:
-      log error "5 >= 5 FAIL"
+    return true
 
-    // 4) Equality / inequality
-    if 10 == 10:
-      log debug "10 == 10 PASS"
-    else:
-      log error "10 == 10 FAIL"
+  func testArithmetic() -> bool
+    log info "TEST: arithmetic + comparisons"
 
-    if 10 != 11:
-      log debug "10 != 11 PASS"
-    else:
-      log error "10 != 11 FAIL"
-
-    // 5) Boolean operators and/or + precedence
-    // (and should bind tighter than or; parentheses should override)
-    if true or false and false:
-      log debug "true or (false and false) => true PASS"
-    else:
-      log error "precedence test 1 FAIL"
-
-    if (true or false) and false:
-      log error "(true or false) and false should be FALSE (this branch should not run)"
-    else:
-      log debug "(true or false) and false correctly evaluated to false"
-
-    // 6) not binding tight
-    if not true or true:
-      log debug "(not true) or true => true PASS"
-    else:
-      log error "not precedence test FAIL"
-
-    // 7) Arithmetic in conditions
     if (2 + 3) * 4 == 20:
       log debug "(2+3)*4 == 20 PASS"
     else:
       log error "(2+3)*4 == 20 FAIL"
 
-    if 21 / 2 > 10:
-      log debug "21/2 > 10 PASS (integer or float division depends on your typing)"
+    if 2 + 3 * 4 == 14:
+      log debug "2+3*4 precedence PASS"
     else:
-      log warn "21/2 > 10 was false (check division semantics)"
+      log error "2+3*4 precedence FAIL"
 
     if 7 % 3 == 1:
-      log debug "7 % 3 == 1 PASS"
+      log debug "7%3 == 1 PASS"
     else:
-      log error "7 % 3 == 1 FAIL"
+      log error "7%3 == 1 FAIL"
 
-    // 8) Nested if + elif/else chain
-    if ready and (47.0 > 40.0):
-      log info "ready and reading high -> entering nested test"
-      if 1 == 2:
-        log error "nested: impossible branch"
-      else:
-        log debug "nested: else branch PASS"
-    elif ready and (47.0 <= 40.0):
-      log error "elif: shouldn't hit (47 <= 40 false)"
+    if 10 == 10:
+      log debug "10==10 PASS"
     else:
-      log error "else: shouldn't hit (ready true and 47>40 true)"
+      log error "10==10 FAIL"
 
-    // 9) Exercise elif chain deterministically
-    if 3 < 0:
-      log error "elif-chain: branch 1 should not run"
-    elif 3 < 2:
-      log error "elif-chain: branch 2 should not run"
-    elif 3 == 3:
-      log info "elif-chain: branch 3 PASS (3 == 3)"
+    if 10 != 11:
+      log debug "10!=11 PASS"
     else:
-      log error "elif-chain: else should not run"
+      log error "10!=11 FAIL"
 
-    // Optional: publish a boolean result as a sanity marker
-    ok.publish(true)
+    if -5 < 0:
+      log debug "-5 < 0 PASS"
+    else:
+      log error "-5 < 0 FAIL"
 
-    transition "Done"
+    if 1.5 < 2.0:
+      log debug "1.5 < 2.0 PASS"
+    else:
+      log error "1.5 < 2.0 FAIL"
+
+    if 2.5 >= 2.5:
+      log debug "2.5 >= 2.5 PASS"
+    else:
+      log error "2.5 >= 2.5 FAIL"
+
+    if 3.14 == 3.14:
+      log debug "3.14 == 3.14 PASS"
+    else:
+      log error "3.14 == 3.14 FAIL"
+
+    if 3.14 != 3.15:
+      log debug "3.14 != 3.15 PASS"
+    else:
+      log error "3.14 != 3.15 FAIL"
+
     return true
+
+  func testBuiltins() -> bool
+    log info "TEST: builtins (min/max/clamp) via asserts"
+
+    if min(10, 20) == 10:
+      log debug "min(10,20)==10 PASS"
+    else:
+      log error "min(10,20)==10 FAIL"
+
+    if max(10, 20) == 20:
+      log debug "max(10,20)==20 PASS"
+    else:
+      log error "max(10,20)==20 FAIL"
+
+    if min(1.5, 2.0) == 1.5:
+      log debug "min(1.5,2.0)==1.5 PASS"
+    else:
+      log error "min(1.5,2.0)==1.5 FAIL"
+
+    if max(1.5, 2.0) == 2.0:
+      log debug "max(1.5,2.0)==2.0 PASS"
+    else:
+      log error "max(1.5,2.0)==2.0 FAIL"
+
+    if clamp(5, 0, 10) == 5:
+      log debug "clamp(5,0,10)==5 PASS"
+    else:
+      log error "clamp(5,0,10)==5 FAIL"
+
+    if clamp(-5, 0, 10) == 0:
+      log debug "clamp(-5,0,10)==0 PASS"
+    else:
+      log error "clamp(-5,0,10)==0 FAIL"
+
+    if clamp(50, 0, 10) == 10:
+      log debug "clamp(50,0,10)==10 PASS"
+    else:
+      log error "clamp(50,0,10)==10 FAIL"
+
+    if clamp(2.5, 0.0, 10.0) == 2.5:
+      log debug "clamp(2.5,0.0,10.0)==2.5 PASS"
+    else:
+      log error "clamp(2.5,0.0,10.0)==2.5 FAIL"
+
+    return true
+
+  func onPing(x: int) -> bool
+    log debug "MathHarness.onPing(x={x})"
+
+    if (x % 2 == 0) and (x >= 0):
+      log info "ping even and non-negative"
+    else:
+      log warn "ping odd or negative"
+
+    if (x < 0) or (x == 0):
+      log debug "ping <= 0 branch"
+    else:
+      log debug "ping > 0 branch"
+
+    return true
+
+  func onFloatPing(x: float) -> bool
+    log debug "MathHarness.onFloatPing(x={x})"
+
+    if x < 0.0:
+      log warn "fping negative"
+    else:
+      log info "fping non-negative"
+
+    if clamp(x, 0.0, 1.0) >= 0.0:
+      log debug "clamp(x,0,1) >= 0 PASS"
+    else:
+      log error "clamp(x,0,1) >= 0 FAIL"
+
+    return true
+
+  func onStage(s: int) -> bool
+    log info "MathHarness.onStage(s={s})"
+
+    if s == 0:
+      transition "Idle"
+    elif s == 1:
+      transition "LocalA"
+    elif s == 2:
+      transition "LocalB"
+    else:
+      transition "Idle"
+
+    return true
+
+  func onSysMsg(m: string) -> bool
+    print "MathHarness saw sys msg: {m}"
+    return true
+
+
+node ModeWatcher : Monitor
+  topic seen = "watch/seen" : int
+
+  onListen CommandCenter.msg   do onMsg()
+  onListen CommandCenter.gate  do onGate()
+  onListen MathHarness.done    do onDone()
+  onListen MathHarness.score   do onScore()
+
+  func onMsg(s: string) -> bool
+    log info "ModeWatcher.onMsg(s={s})"
+    return true
+
+  func onGate(b: bool) -> bool
+    log warn "ModeWatcher.onGate(b={b})"
+    return true
+
+  func onDone(b: bool) -> bool
+    log info "ModeWatcher.onDone(b={b})"
+    if b:
+      seen.publish(1)
+    else:
+      seen.publish(0)
+    return true
+
+  func onScore(v: int) -> bool
+    log info "ModeWatcher.onScore(v={v})"
+    return true
+
 
 node LoggerNode : DataRecorder ignore system
-  onListen SensorArray.reading do recordData()
-  onListen SensorArray.ok do recordOk()
+  topic lines = "log/lines" : int
 
-  func recordData(val: float) -> bool
-    print "Logger saw reading: {val}"
+  onListen CommandCenter.hb    do hbSeen()
+  onListen CommandCenter.ready do readySeen()
+  onListen CommandCenter.ping  do pingSeen()
+  onListen CommandCenter.fping do fpingSeen()
+  onListen CommandCenter.msg   do msgSeen()
+  onListen CommandCenter.gate  do gateSeen()
+  onListen CommandCenter.stage do stageSeen()
+
+  onListen MathHarness.done    do mhDone()
+  onListen MathHarness.score   do mhScore()
+
+  onListen ModeWatcher.seen    do mwSeen()
+
+  func hbSeen(v: int) -> bool
+    log debug "LOG hb={v}"
     return true
 
-  func recordOk(v: bool) -> bool
-    log info "Logger saw ok={v}"
+  func readySeen(v: bool) -> bool
+    log debug "LOG ready={v}"
     return true
+
+  func pingSeen(v: int) -> bool
+    log debug "LOG ping={v}"
+    return true
+
+  func fpingSeen(v: float) -> bool
+    log debug "LOG fping={v}"
+    return true
+
+  func msgSeen(s: string) -> bool
+    print "LOG msg: {s}"
+    return true
+
+  func gateSeen(b: bool) -> bool
+    log debug "LOG gate={b}"
+    return true
+
+  func stageSeen(v: int) -> bool
+    log debug "LOG stage={v}"
+    return true
+
+  func mhDone(b: bool) -> bool
+    log info "LOG math.done={b}"
+    return true
+
+  func mhScore(v: int) -> bool
+    log info "LOG math.score={v}"
+    return true
+
+  func mwSeen(v: int) -> bool
+    log info "LOG watch.seen={v}"
+    return true
+
 
 mode CommandCenter->Init
-  log "Init: kicking off test"
-  system_ready.publish(true)
-  request CommandCenter.activate()
+  log info "Init: kick off"
+  request CommandCenter.boot()
+
 
 mode CommandCenter->Startup
-  log "Startup mode entered"
-  transition system "Active"
+  log info "SYS Startup entered"
+  hb.publish(1)
+  msg.publish("sys: Startup")
+  gate.publish(false)
+  stage.publish(0)
 
-mode SensorArray->Active
-  log info "SensorArray sees system Active"
+  ready.publish(true)
 
-mode SensorArray->"Done"
-  log warn "SensorArray finished conditional tests"
+  ping.publish(0)
+  ping.publish(1)
+  ping.publish(2)
 
-mode LoggerNode->Init
-  log debug "LoggerNode init"
+  fping.publish(0.25)
+  fping.publish(1.25)
+
+  stage.publish(1)
+  request CommandCenter.flipGate(true)
+
+  request CommandCenter.toActive()
+
+
+mode CommandCenter->Active
+  log info "SYS Active entered"
+  hb.publish(2)
+  msg.publish("sys: Active")
+
+  ping.publish(3)
+  ping.publish(4)
+  ping.publish(-1)
+
+  fping.publish(-0.5)
+  fping.publish(0.75)
+
+  stage.publish(2)
+  request CommandCenter.flipGate(false)
+
+  request CommandCenter.toDiag()
+
+
+mode CommandCenter->Diagnostics
+  log info "SYS Diagnostics entered"
+  hb.publish(9)
+  msg.publish("sys: Diagnostics")
+
+  stage.publish(0)
+  ping.publish(8)
+  ping.publish(9)
+
+  fping.publish(0.10)
+  fping.publish(0.90)
+
+  // cross-node local mode movement (controller-only)
+  transition MathHarness "LocalA"
+  transition MathHarness "LocalB"
+
+  request CommandCenter.toSafe()
+
+
+mode CommandCenter->Safe
+  log warn "SYS Safe entered (end)"
+  hb.publish(3)
+  msg.publish("sys: Safe")
+  gate.publish(false)
+  stage.publish(0)
+
+
+mode MathHarness->Init
+  log debug "MathHarness Init"
+
+
+mode MathHarness->"Idle"
+  log debug "MathHarness local Idle"
+  score.publish(0)
+
+
+mode MathHarness->"LocalA"
+  log info "MathHarness local LocalA"
+  onListen CommandCenter.ping do onPing()
+  score.publish(10)
+
+
+mode MathHarness->"LocalB"
+  log info "MathHarness local LocalB"
+  onListen CommandCenter.fping do onFloatPing()
+  score.publish(20)
+
+
+mode ModeWatcher->Active
+  log debug "ModeWatcher sees system Active"
+
+mode ModeWatcher->Safe
+  log debug "ModeWatcher sees system Safe"

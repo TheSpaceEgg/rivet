@@ -60,6 +60,15 @@ static void print_expr(const ExprPtr& e, std::ostream& os) {
         os << id->name;
         return;
     }
+    if (auto call = std::get_if<Expr::Call>(&e->v)) {
+        os << call->callee << "(";
+        for (size_t i = 0; i < call->args.size(); ++i) {
+            if (i) os << ", ";
+            print_expr(call->args[i], os);
+        }
+        os << ")";
+        return;
+    }
     if (auto un = std::get_if<Expr::Unary>(&e->v)) {
         if (un->op == UnaryOp::Not) os << "not ";
         else os << "-";

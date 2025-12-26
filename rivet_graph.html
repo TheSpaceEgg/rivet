@@ -27,17 +27,32 @@
     color = black;
     bgcolor = white;
     CommandCenter [label="CommandCenter", shape=component, fillcolor="#d0e0ff"];
-    CommandCenter__heartbeat [label="sys/hb\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    CommandCenter__system_ready [label="sys/ready\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__hb [label="sys/hb\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__ready [label="sys/ready\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__gate [label="sys/gate\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__ping [label="sys/ping\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__fping [label="sys/fping\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__msg [label="sys/msg\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__stage [label="sys/stage\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
 
-  subgraph cluster_SensorArray {
-    label = "SensorArray : DataCollector";
+  subgraph cluster_MathHarness {
+    label = "MathHarness : DataCollector";
     style = rounded;
     color = black;
     bgcolor = white;
-    SensorArray [label="SensorArray", shape=component, fillcolor="#d0e0ff"];
-    SensorArray__reading [label="sense/val\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    MathHarness [label="MathHarness", shape=component, fillcolor="#d0e0ff"];
+    MathHarness__done [label="math/done\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    MathHarness__score [label="math/score\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+  }
+
+  subgraph cluster_ModeWatcher {
+    label = "ModeWatcher : Monitor";
+    style = rounded;
+    color = black;
+    bgcolor = white;
+    ModeWatcher [label="ModeWatcher", shape=component, fillcolor="#d0e0ff"];
+    ModeWatcher__seen [label="watch/seen\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
 
   subgraph cluster_LoggerNode {
@@ -46,15 +61,70 @@
     color = black;
     bgcolor = white;
     LoggerNode [label="LoggerNode", shape=component, fillcolor="#d0e0ff"];
-    LoggerNode__disk_status [label="disk/stat\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    LoggerNode__lines [label="log/lines\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
-  CommandCenter__system_ready -> SensorArray [color=green];
-    SensorArray -> SensorArray__reading [color=blue];
-  SensorArray__reading -> LoggerNode [color=green];
-    CommandCenter -> CommandCenter [style=dashed, label="activate"];
-    CommandCenter -> CommandCenter__system_ready [color=blue];
-    CommandCenter -> CommandCenter [style=dashed, label="goLive"];
-    LoggerNode -> LoggerNode__disk_status [color=blue];
+    CommandCenter -> CommandCenter__gate [color=blue];
+  CommandCenter__ready -> MathHarness [color=green];
+  CommandCenter__ping -> MathHarness [color=green];
+  CommandCenter__fping -> MathHarness [color=green];
+  CommandCenter__stage -> MathHarness [color=green];
+  CommandCenter__msg -> MathHarness [color=green];
+    MathHarness -> MathHarness__done [color=blue];
+  CommandCenter__msg -> ModeWatcher [color=green];
+  CommandCenter__gate -> ModeWatcher [color=green];
+  MathHarness__done -> ModeWatcher [color=green];
+  MathHarness__score -> ModeWatcher [color=green];
+    ModeWatcher -> ModeWatcher__seen [color=blue];
+    ModeWatcher -> ModeWatcher__seen [color=blue];
+  CommandCenter__hb -> LoggerNode [color=green];
+  CommandCenter__ready -> LoggerNode [color=green];
+  CommandCenter__ping -> LoggerNode [color=green];
+  CommandCenter__fping -> LoggerNode [color=green];
+  CommandCenter__msg -> LoggerNode [color=green];
+  CommandCenter__gate -> LoggerNode [color=green];
+  CommandCenter__stage -> LoggerNode [color=green];
+  MathHarness__done -> LoggerNode [color=green];
+  MathHarness__score -> LoggerNode [color=green];
+  ModeWatcher__seen -> LoggerNode [color=green];
+    CommandCenter -> CommandCenter [style=dashed, label="boot"];
+    CommandCenter -> CommandCenter__hb [color=blue];
+    CommandCenter -> CommandCenter__msg [color=blue];
+    CommandCenter -> CommandCenter__gate [color=blue];
+    CommandCenter -> CommandCenter__stage [color=blue];
+    CommandCenter -> CommandCenter__ready [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__fping [color=blue];
+    CommandCenter -> CommandCenter__fping [color=blue];
+    CommandCenter -> CommandCenter__stage [color=blue];
+    CommandCenter -> CommandCenter [style=dashed, label="flipGate"];
+    CommandCenter -> CommandCenter [style=dashed, label="toActive"];
+    CommandCenter -> CommandCenter__hb [color=blue];
+    CommandCenter -> CommandCenter__msg [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__fping [color=blue];
+    CommandCenter -> CommandCenter__fping [color=blue];
+    CommandCenter -> CommandCenter__stage [color=blue];
+    CommandCenter -> CommandCenter [style=dashed, label="flipGate"];
+    CommandCenter -> CommandCenter [style=dashed, label="toDiag"];
+    CommandCenter -> CommandCenter__hb [color=blue];
+    CommandCenter -> CommandCenter__msg [color=blue];
+    CommandCenter -> CommandCenter__stage [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__ping [color=blue];
+    CommandCenter -> CommandCenter__fping [color=blue];
+    CommandCenter -> CommandCenter__fping [color=blue];
+    CommandCenter -> CommandCenter [style=dashed, label="toSafe"];
+    CommandCenter -> CommandCenter__hb [color=blue];
+    CommandCenter -> CommandCenter__msg [color=blue];
+    CommandCenter -> CommandCenter__gate [color=blue];
+    CommandCenter -> CommandCenter__stage [color=blue];
+    MathHarness -> MathHarness__score [color=blue];
+    MathHarness -> MathHarness__score [color=blue];
+    MathHarness -> MathHarness__score [color=blue];
 }
 `;
         var viz = new Viz();
