@@ -4,13 +4,13 @@
 #include "print_ast.hpp"
 #include "source.hpp"
 #include "validate.hpp"
-#include "graphviz.hpp" // <--- Include this
+#include "graphviz.hpp"
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <cstring> // for strcmp
+#include <cstring>
 
 static std::string read_file(const std::string& path) {
     std::ifstream file(path, std::ios::in | std::ios::binary);
@@ -22,16 +22,17 @@ static std::string read_file(const std::string& path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: rivet <file.rv> [--graph]\n";
+        std::cerr << "Usage: rivet <file.rv> [--graph | --show]\n";
         return 1;
     }
 
     std::string filename = argv[1];
-    bool graph_mode = false;
+    bool raw_dot_mode = false;
+    bool auto_show_mode = false;
 
-    // Simple arg parsing
-    if (argc >= 3 && std::strcmp(argv[2], "--graph") == 0) {
-        graph_mode = true;
+    if (argc >= 3) {
+        if (std::strcmp(argv[2], "--graph") == 0) raw_dot_mode = true;
+        if (std::strcmp(argv[2], "--show") == 0) auto_show_mode = true;
     }
 
     try {
@@ -45,9 +46,16 @@ int main(int argc, char** argv) {
 
         if (!ok) return 2;
 
-        if (graph_mode) {
+        if (raw_dot_mode) {
+            // Output raw DOT text to stdout (for piping)
             generate_dot(p, std::cout);
-        } else {
+        } 
+        else if (auto_show_mode) {
+            // Generate HTML and pop it open
+            generate_and_open_html(p, "rivet_graph.html");
+        } 
+        else {
+            // Default: AST
             print_ast(p, std::cout);
         }
 

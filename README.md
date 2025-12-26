@@ -1,280 +1,136 @@
-# Rivet Language — Syntax & Design Notes (WIP)
+# Rivet Language Reference
 
-Rivet is a domain-specific language for lightweight robotics systems, intended as a simpler alternative to ROS for tightly-coupled robotic deployments.
+Rivet is a domain-specific language (DSL) for defining robust, state-machine-driven robotics architectures. It enforces strict separation of concerns, type safety, and authority hierarchies.
 
----
-
-## 1. File Structure
-
-A Rivet source file consists only of top-level declarations.
-
-Valid top-level declarations:
-
-- `systemMode`
-- `node`
-- `mode`
-
-Anything else at the top level is a syntax error.
-
----
-
-## 2. Indentation Rules
-
-Rivet uses indentation to define scope.
-
-- Indentation is significant
-- Blocks are introduced by a newline followed by indentation
-- There are no braces for blocks
-- Indentation must be consistent within a block
-
----
-
-## 3. Comments
-
-### Line comments
+## 1. System Definition
+Define the high-level lifecycle states of the robot. `Init`, `Normal`, and `Shutdown` are reserved and implicitly exist.
 
 ```rivet
-// This is a comment
+systemMode Launch
+systemMode Emergency
 ```
 
-- Runs from `//` to end of line
-- Ignored by the lexer
+## 2. Nodes
+Nodes are the primary components (sensors, actuators, logic).
 
-### Block comments
+**Standard Node**
+```rivet
+node Sensor : Lidar
+  // ...
+```
+
+**Controller Node**
+Only controllers can trigger `transition system`.
+```rivet
+node controller Brain : MainCPU
+```
+
+**Isolated Node**
+Ignores system mode changes (e.g., recorders).
+```rivet
+node BlackBox : Recorder ignore system
+```
+
+## 3. Data & Communication
+**Topics** (Typed data streams)
+```rivet
+topic altitude = "env/alt" : float
+topic status   = "sys/stat" : string
+```
+
+**Functions**
+* `onRequest`: Public API (callable by others).
+* `func`: Private helper (internal only).
 
 ```rivet
-/*
-  Multi-line comment
-*/
+onRequest calibrate() -> bool
+  return true
+
+func internalCheck(val: int) -> bool
+  return true
 ```
 
-- Not nestable
-- Newlines count for line/column tracking
-- Unterminated block comments are an error
-
----
-
-## 4. `systemMode` Declarations
-
-System modes are global mode names that may be implemented by multiple nodes.
-
+**Actions**
 ```rivet
-systemMode survey
-systemMode diagnostics
+altitude.publish(10.5)
+request OtherNode.calibrate()
+request silent OtherNode.save() // Ignore return value
 ```
 
-Rules:
+## 4. Event Handling (Listeners)
+Nodes react to topics published by others.
 
-- Must be declared at top level
-- Names must be identifiers
-- Reserved mode names must not be declared as system modes
-
-Reserved modes:
-
-- `boot`
-- `normal`
-- `idle`
-- `fault`
-- `shutdown`
-
----
-
-## 5. `node` Declarations
-
-Nodes represent hardware or logical components.
-
+**Global Listener** (Active in all modes)
 ```rivet
-node imu : I2C{bus:3, addr:0x49}
-node motor : PWM{pin:12, freq:20000}
+// Inline
+onListen Brain.status handleState(s: string)
+  internalCheck(1)
+
+// Delegated (Routes to function)
+onListen Brain.abort do stopProcess()
 ```
 
-Syntax:
-
+**Scoped Listener** (Active only in specific mode)
 ```rivet
-node <nodeName> : <nodeType>{ optional raw config }
+mode Sensor->Calibrating
+  onListen Brain.abort do stopProcess()
 ```
 
-Rules:
+## 5. State Management (Modes)
+Logic is grouped into Modes.
 
-- Node names must be unique
-- Node types are identifiers
-- Config blocks are currently treated as raw text blobs (parsing deferred)
-
----
-
-## 6. `mode` Declarations
-
-Modes define behaviour for a node under a named operating condition.
-
+**Explicit Modes**
+Define behavior for a specific node in a specific state.
 ```rivet
-mode imu->normal
-  readSensor()
-  publishData()
+// Standard Mode
+mode Sensor->Calibrating
+  transition "Idle"
+
+// System-Bound Mode (Runs when system is in 'Emergency')
+mode Thrusters->Emergency
+  request Thrusters.stop()
 ```
 
----
-
-## 7. Mode Name Types
-
-There are two kinds of mode names.
-
-### 7.1 Identifier mode names
-
+**Isolation**
+A specific mode can ignore system state changes.
 ```rivet
-mode imu->normal
+mode Thrusters->Firing ignore system
 ```
 
-- Must be a reserved mode OR a declared `systemMode`
-
-### 7.2 Node-local string mode names
-
+## 6. Transitions
+**Local Transition**: Switches the *current node* to a new local state.
 ```rivet
-mode imu->"calibrate"
+transition "Idle"
 ```
 
-- Exist only for that node
-- Do not require global declaration
-- Must be referenced exactly
-
----
-
-## 8. Mode Bodies
-
-Mode bodies are indented blocks of statements.
-
-Currently supported statements:
-
-- function calls only
-
+**System Transition**: Switches the *entire robot* to a new system mode. (Controllers only).
 ```rivet
-mode imu->boot
-  initIMU()
-  setRange(2000)
+transition system "Emergency"
 ```
 
-Rules:
-
-- One statement per line
-- Must be a function call
-- No control flow yet
-
----
-
-## 9. Mode Delegation (`do`)
-
-Modes may delegate to another mode.
-
+## 7. Example Script
 ```rivet
-mode imu->fault do normal
+systemMode Mission
+
+node controller Brain : CPU
+  topic state = "sys/state" : string
+
+  onRequest start() -> bool
+    transition system "Mission"
+    return true
+
+node Sensor : Lidar
+  topic data = "env/data" : float
+
+  // 1. Reserved Init Mode
+  mode Sensor->Init
+    data.publish(0.0)
+
+  // 2. System-Specific Behavior
+  mode Sensor->Mission
+    onListen Brain.state do processState()
+
+  func processState(s: string) -> bool
+    data.publish(1.0)
+    return true
 ```
-
-Rules:
-
-- `do` is single-line only
-- A `mode ... do ...` declaration cannot have an indented body
-- Delegation targets must resolve to:
-  - a reserved mode
-  - a declared `systemMode`
-  - or a node-local string mode on the same node
-
-Invalid:
-
-```rivet
-mode imu->idle do calibrate
-  sleepMs(100)
-```
-
----
-
-## 10. Delegation Resolution Rules
-
-When resolving `do <target>`:
-
-1. If `<target>` is quoted, it must exist as a node-local string mode
-2. If `<target>` is an identifier, it must be:
-   - a reserved mode
-   - a systemMode
-   - OR a node-local string mode with matching text
-
-Example:
-
-```rivet
-mode imu->"calibrate"
-  startCal()
-
-mode imu->idle do calibrate
-```
-
----
-
-## 11. Error Reporting
-
-Diagnostics include:
-
-- filename
-- line and column
-- coloured severity (`error`, `warning`, `note`)
-- source line
-- caret position
-
----
-
-## 12. Validation Rules
-
-The validator enforces:
-
-- Duplicate node declarations
-- Unknown nodes in mode declarations
-- Duplicate mode bindings per node
-- Unknown identifier mode names
-- Invalid delegation targets
-- Circular delegation chains per node
-
----
-
-## 13. Current Limitations
-
-Rivet does not yet support:
-
-- variables
-- expressions
-- conditionals
-- loops
-- returns
-- message passing
-- runtime execution
-
-This is deliberate; the front-end is being built first.
-
----
-
-## 14. Planned Next Steps
-
-### Near-term
-
-- `publish` statements
-- request/response semantics
-- runtime execution skeleton
-- system-wide mode switching
-
-### Mid-term
-
-- typed messages
-- transport abstraction (I2C, SPI, CAN, UART, PWM)
-- code generation
-
-### Long-term
-
-- static scheduling
-- distributed execution
-- tooling (syntax highlighting, LSP)
-
----
-
-## 15. Design Philosophy
-
-- Explicit over implicit
-- Compile-time errors preferred over runtime ambiguity
-- Minimal runtime complexity
-- Clear mapping to embedded systems
-- No magic behaviour

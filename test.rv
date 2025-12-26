@@ -1,74 +1,101 @@
-systemMode emergency_stop
+systemMode Launch
+systemMode Orbit
+systemMode Deorbit
 
-node lidar : SensorLidar
-  topic scan = "perception/scan_data" : float
-  topic alarm = "perception/obstacle" : bool
+/* Complex Integration Test: Orbital Satellite Architecture
+   Features: Scoped Listeners, Delegation, Isolation, Controllers
+*/
 
-  func internalFilter(raw: float) -> float
-    return raw
+node controller OBC : MainComputer
+  topic state = "sys/state" : string
+  topic altitude = "sys/alt" : float
+  topic abort = "sys/abort" : bool
 
-  onRequest startScan(rate: int) -> bool
-    scan.publish(10.5)
+  onRequest initiateLaunch() -> bool
+    state.publish("LAUNCH_SEQUENCE")
+    transition system "Launch"
     return true
 
-  onRequest checkPath() -> bool
-    alarm.publish(true)
-    return false
-
-node planner : NavStack
-  topic cmd_vel = "navigation/velocity" : float
-  topic status = "navigation/status" : string
-
-  onListen lidar.scan handleScan(dist: float)
-    calculatePath(dist)
-
-  onListen lidar.alarm handleObstacle(danger: bool)
-    status.publish("BLOCKED")
-    request silent motors.halt()
-
-  func calculatePath(d: float) -> bool
-    cmd_vel.publish(0.8)
+  onRequest stabilize() -> bool
+    state.publish("STABLE")
+    transition system "Orbit"
     return true
 
-  onRequest getPlan() -> string
-    return "Waypoints..."
-
-node motors : DriveController
-  topic odometry = "drive/odom" : float
-  topic state = "drive/status" : int
-
-  onListen planner.cmd_vel setVelocity(v: float)
-    runPID(v)
-
-  func runPID(target: float) -> int
-    odometry.publish(target)
-    return 1
-
-  onRequest halt() -> bool
+  onRequest triggerDeorbit() -> bool
+    transition system "Deorbit"
     return true
 
-  func reportStatus(s: int) -> bool
-    state.publish(s)
+  onRequest emergencyStop() -> bool
+    abort.publish(true)
+    transition system "Shutdown"
     return true
 
-node dashboard : UI
-  onListen planner.status showStatus(msg: string)
-    log(msg)
+node Gyroscope : IMU
+  topic raw_z = "sense/z" : float
 
-  onListen motors.odometry updateMap(pos: float)
-    render(pos)
+  // Delegation: Routes data directly to private function
+  onListen OBC.altitude do adjustSensitivity()
 
-  func log(m: string) -> int
-    return 1
-
-  func render(p: float) -> bool
+  func adjustSensitivity(alt: float) -> bool
     return true
 
-mode planner->normal
-  request lidar.startScan(20)
+  onRequest calibrate() -> bool
+    transition "Calibrating"
+    return true
 
-mode motors->normal
-  reportStatus(1)
+  func internalRead() -> float
+    raw_z.publish(-0.05)
+    return -0.05
 
-mode planner->emergency_stop
-  request motors.halt()
+node Thrusters : Propulsion ignore system
+  topic fuel = "prop/fuel" : int
+  topic active = "prop/active" : bool
+
+  onListen OBC.abort hardStop(panic: bool)
+    active.publish(false)
+
+  onRequest fire(duration: int) -> bool
+    active.publish(true)
+    consume(duration)
+    return true
+
+  func consume(amount: int) -> int
+    fuel.publish(amount)
+    return 0
+
+node Radio : CommLink
+  topic uplink = "comm/rx" : string
+
+  onRequest sendTelemetry() -> bool
+    uplink.publish("ACK")
+    return true
+
+  func filterNoise(s: string) -> bool
+    return true
+
+  func deepSleep(ignore_val: bool) -> bool
+    return true
+
+mode OBC->Init
+  state.publish("BOOT")
+  altitude.publish(0.0)
+
+mode Gyroscope->Calibrating
+  onListen OBC.state checkPhase(s: string)
+    transition "Idle"
+
+mode Gyroscope->Orbit
+  request Radio.sendTelemetry()
+  internalRead()
+
+mode Thrusters->Active
+  request OBC.stabilize()
+
+mode Radio->Launch
+  onListen OBC.state do filterNoise()
+
+mode Radio->Shutdown
+  onListen OBC.abort do deepSleep()
+
+mode OBC->Deorbit
+  request Thrusters.fire(100)

@@ -3,12 +3,8 @@
   "displayName": "Rivet Language Support",
   "description": "Syntax highlighting for Rivet (.rv)",
   "version": "0.0.1",
-  "engines": {
-    "vscode": "^1.70.0"
-  },
-  "categories": [
-    "Programming Languages"
-  ],
+  "engines": { "vscode": "^1.70.0" },
+  "categories": [ "Programming Languages" ],
   "contributes": {
     "languages": [{
       "id": "rivet",
@@ -20,6 +16,16 @@
       "language": "rivet",
       "scopeName": "source.rivet",
       "path": "./syntaxes/rivet.tmLanguage.json"
-    }]
+    }],
+    "snippets": [{
+      "language": "rivet",
+      "path": "./rivet.code-snippets"
+    }],
+    "configurationDefaults": {
+      "[rivet]": {
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": true
+      }
+    }
   }
 }

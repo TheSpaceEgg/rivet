@@ -1,155 +1,180 @@
 #include "print_ast.hpp"
-#include <type_traits>
+#include "ast.hpp"
+#include <iostream>
 #include <string>
+#include <variant>
 
-static void indent(std::ostream& os, int n) {
-    for (int i = 0; i < n; ++i) os << "  ";
+// ... (Keep helpers: indent, print_type, print_params, print_stmt, print_stmts)
+
+static void indent(std::ostream& os, int depth) {
+    for (int i = 0; i < depth; ++i) os << "  ";
 }
 
-static std::string type_str(const TypeInfo& t) {
+static void print_type(const TypeInfo& t, std::ostream& os) {
     switch(t.base) {
-        case ValType::Int: return "int";
-        case ValType::Float: return "float";
-        case ValType::String: return "string";
-        case ValType::Bool: return "bool";
-        case ValType::Custom: return t.custom_name;
+        case ValType::Int:    os << "int"; break;
+        case ValType::Float:  os << "float"; break;
+        case ValType::String: os << "string"; break;
+        case ValType::Bool:   os << "bool"; break;
+        case ValType::Custom: os << t.custom_name; break;
     }
-    return "unknown";
+}
+
+static void print_params(const std::vector<Param>& params, std::ostream& os) {
+    os << "(";
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) os << ", ";
+        os << params[i].name << ": ";
+        print_type(params[i].type, os);
+    }
+    os << ")";
 }
 
 static void print_stmt(const Stmt& stmt, std::ostream& os, int depth) {
-    std::visit([&](auto&& s) {
-        using T = std::decay_t<decltype(s)>;
-        indent(os, depth);
-        if constexpr (std::is_same_v<T, CallStmt>) {
-            os << "Call " << s.callee << "(";
-            for (size_t i = 0; i < s.args.size(); ++i) {
-                os << s.args[i];
-                if (i + 1 < s.args.size()) os << ", ";
-            }
-            os << ")\n";
+    indent(os, depth);
+    if (auto call = std::get_if<CallStmt>(&stmt)) {
+        os << call->callee << "(";
+        for (size_t i = 0; i < call->args.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << call->args[i];
         }
-        else if constexpr (std::is_same_v<T, RequestStmt>) {
-            os << "Request " << (s.is_silent ? "(silent) " : "")
-               << s.target_node << "." << s.func_name << "(";
-            for (size_t i = 0; i < s.args.size(); ++i) {
-                os << s.args[i];
-                if (i + 1 < s.args.size()) os << ", ";
-            }
-            os << ")\n";
-        }
-        else if constexpr (std::is_same_v<T, PublishStmt>) {
-            os << "Publish handle=" << s.topic_handle << " value=" << s.value << "\n";
-        }
-        else if constexpr (std::is_same_v<T, ReturnStmt>) {
-            os << "Return " << s.value << "\n";
-        }
-    }, stmt);
-}
-
-static void print_modename(const ModeName& m, std::ostream& os) {
-    if (m.is_local_string) os << "\"" << m.text << "\"";
-    else os << m.text;
-}
-
-static void print_signature(const FuncSignature& sig, std::ostream& os) {
-    os << sig.name << "(";
-    for (size_t i = 0; i < sig.params.size(); ++i) {
-        os << sig.params[i].name << ": " << type_str(sig.params[i].type);
-        if (i + 1 < sig.params.size()) os << ", ";
+        os << ")\n";
     }
-    os << ") -> " << type_str(sig.return_type);
+    else if (auto req = std::get_if<RequestStmt>(&stmt)) {
+        os << "request ";
+        if (req->is_silent) os << "silent ";
+        os << req->target_node << "." << req->func_name << "(";
+        for (size_t i = 0; i < req->args.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << req->args[i];
+        }
+        os << ")\n";
+    }
+    else if (auto pub = std::get_if<PublishStmt>(&stmt)) {
+        os << pub->topic_handle << ".publish(" << pub->value << ")\n";
+    }
+    else if (auto ret = std::get_if<ReturnStmt>(&stmt)) {
+        os << "return " << ret->value << "\n";
+    }
+    else if (auto tr = std::get_if<TransitionStmt>(&stmt)) {
+        os << "transition ";
+        if (tr->is_system) os << "system ";
+        os << "\"" << tr->target_state << "\"\n";
+    }
 }
 
-void print_ast(const Program& program, std::ostream& os) {
-    os << "Program\n";
+static void print_stmts(const std::vector<Stmt>& stmts, std::ostream& os, int depth) {
+    for (const auto& s : stmts) print_stmt(s, os, depth);
+}
 
-    for (const auto& d : program.decls) {
-        std::visit([&](auto&& x) {
-            using T = std::decay_t<decltype(x)>;
+// ---------------------------------------------------------
+// Component Printers
+// ---------------------------------------------------------
 
-            if constexpr (std::is_same_v<T, SystemModeDecl>) {
+static void print_listener(const OnListenDecl& lis, std::ostream& os, int depth) {
+    indent(os, depth);
+    os << "onListen ";
+    if (!lis.source_node.empty()) os << lis.source_node << ".";
+    os << lis.topic_name << " ";
+
+    if (!lis.delegate_to.empty()) {
+        // NEW: Print with brackets
+        os << "do " << lis.delegate_to << "()\n";
+    } else {
+        os << lis.sig.name;
+        print_params(lis.sig.params, os);
+        os << "\n";
+        print_stmts(lis.body, os, depth + 1);
+    }
+}
+
+static void print_modename(const ModeName& mn, std::ostream& os) {
+    if (mn.is_local_string) os << "\"" << mn.text << "\"";
+    else os << mn.text;
+}
+
+// ---------------------------------------------------------
+// Main Visitor
+// ---------------------------------------------------------
+
+void print_ast(const Program& p, std::ostream& os) {
+    auto visitor = [&](auto&& x) {
+        using T = std::decay_t<decltype(x)>;
+
+        if constexpr (std::is_same_v<T, SystemModeDecl>) {
+            os << "systemMode " << x.name << "\n";
+        }
+        else if constexpr (std::is_same_v<T, NodeDecl>) {
+            os << "\nnode ";
+            if (x.is_controller) os << "controller ";
+            os << x.name << " : " << x.type_name;
+            
+            if (x.ignores_system) os << " ignore system";
+            
+            if (!x.config_text.empty()) os << " " << x.config_text;
+            os << "\n";
+
+            // Topics
+            for (const auto& t : x.topics) {
                 indent(os, 1);
-                os << "SystemMode " << x.name << "\n";
-            }
-            else if constexpr (std::is_same_v<T, FuncDecl>) {
-                indent(os, 1);
-                os << "Func ";
-                print_signature(x.sig, os);
+                os << "topic " << t.name << " = \"" << t.path << "\" : ";
+                print_type(t.type, os);
                 os << "\n";
-                for (const auto& st : x.body) print_stmt(st, os, 2);
             }
-            else if constexpr (std::is_same_v<T, NodeDecl>) {
+
+            // Public Requests
+            for (const auto& r : x.requests) {
                 indent(os, 1);
-                os << "Node name=" << x.name << " type=" << x.type_name << "\n";
-                if (!x.config_text.empty()) {
-                    indent(os, 2);
-                    os << "config=" << x.config_text << "\n";
-                }
-
-                // TOPICS
-                for (const auto& topic : x.topics) {
-                    indent(os, 2);
-                    os << "Topic handle=" << topic.name 
-                       << " path=\"" << topic.path << "\"" 
-                       << " type=" << type_str(topic.type) << "\n";
-                }
-
-                // PRIVATES
-                for (const auto& func : x.private_funcs) {
-                    indent(os, 2);
-                    os << "PrivateFunc ";
-                    print_signature(func.sig, os);
+                os << "onRequest ";
+                if (!r.delegate_to.empty()) {
+                    // NEW: Print with brackets
+                    os << "do " << r.delegate_to << "()\n";
+                } else {
+                    os << r.sig.name;
+                    print_params(r.sig.params, os);
+                    os << " -> ";
+                    print_type(r.sig.return_type, os);
                     os << "\n";
-                    for (const auto& st : func.body) print_stmt(st, os, 3);
+                    print_stmts(r.body, os, 2);
                 }
+            }
 
-                // REQUESTS
-                for (const auto& req : x.requests) {
-                    indent(os, 2);
-                    os << "OnRequest ";
-                    if (!req.delegate_to.empty()) {
-                         os << "(Delegated to " << req.delegate_to << ")\n";
-                    } else {
-                         print_signature(req.sig, os);
-                         os << "\n";
-                         for (const auto& st : req.body) print_stmt(st, os, 3);
-                    }
-                }
+            // Global Listeners
+            for (const auto& l : x.listeners) {
+                print_listener(l, os, 1);
+            }
 
-                // LISTENERS
-                for (const auto& lis : x.listeners) {
-                    indent(os, 2);
-                    os << "OnListen handle=";
-                    if (!lis.source_node.empty()) os << lis.source_node << ".";
-                    os << lis.topic_name << " ";
-                    
-                    if (!lis.delegate_to.empty()) {
-                        os << "Delegate -> " << lis.delegate_to << "\n";
-                    } else {
-                        print_signature(lis.sig, os);
-                        os << "\n";
-                        for (const auto& st : lis.body) print_stmt(st, os, 3);
-                    }
-                }
-            } 
-            else if constexpr (std::is_same_v<T, ModeDecl>) {
+            // Private Functions
+            for (const auto& f : x.private_funcs) {
                 indent(os, 1);
-                os << "Mode " << x.node_name << "->";
-                print_modename(x.mode_name, os);
+                os << "func " << f.sig.name;
+                print_params(f.sig.params, os);
+                os << " -> ";
+                print_type(f.sig.return_type, os);
                 os << "\n";
-                if (x.delegate_to.has_value()) {
-                    indent(os, 2);
-                    os << "do ";
-                    print_modename(*x.delegate_to, os);
-                    os << "\n";
-                }
-                if (!x.body.empty()) {
-                    indent(os, 2);
-                    os << "body:\n";
-                    for (const auto& st : x.body) print_stmt(st, os, 3);
-                }
+                print_stmts(f.body, os, 2);
             }
-        }, d);
+        }
+        else if constexpr (std::is_same_v<T, ModeDecl>) {
+            os << "\nmode " << x.node_name << "->";
+            print_modename(x.mode_name, os);
+            if (x.ignores_system) os << " ignore system";
+            os << "\n";
+
+            // Mode Body Statements
+            print_stmts(x.body, os, 1);
+
+            // Mode Scoped Listeners
+            for (const auto& l : x.listeners) {
+                print_listener(l, os, 1);
+            }
+        }
+        else if constexpr (std::is_same_v<T, FuncDecl>) {
+            os << "func " << x.sig.name << "\n";
+        }
+    };
+
+    for (const auto& decl : p.decls) {
+        std::visit(visitor, decl);
     }
 }

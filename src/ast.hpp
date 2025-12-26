@@ -27,8 +27,8 @@ struct SystemModeDecl {
 // --- Topic Declaration ---
 struct TopicDecl {
     SourceLoc loc{};
-    std::string name; // handle (e.g. "data")
-    std::string path; // path (e.g. "imu/accel")
+    std::string name; 
+    std::string path; 
     TypeInfo type;
 };
 
@@ -47,7 +47,6 @@ struct RequestStmt {
     std::vector<std::string> args;
 };
 
-// NEW: Publish via handle
 struct PublishStmt {
     SourceLoc loc{};
     std::string topic_handle; 
@@ -59,7 +58,13 @@ struct ReturnStmt {
     std::string value;
 };
 
-using Stmt = std::variant<CallStmt, RequestStmt, PublishStmt, ReturnStmt>;
+struct TransitionStmt {
+    SourceLoc loc{};
+    bool is_system = false;     
+    std::string target_state;
+};
+
+using Stmt = std::variant<CallStmt, RequestStmt, PublishStmt, ReturnStmt, TransitionStmt>;
 
 // --- Function Declarations ---
 struct FuncSignature {
@@ -82,24 +87,30 @@ struct OnRequestDecl {
 
 struct OnListenDecl {
     SourceLoc loc{};
-    std::string source_node; // e.g. "imu" (empty if local)
-    std::string topic_name;  // e.g. "data"
+    std::string source_node; 
+    std::string topic_name;  
     
+    // If delegates, this holds the function name. If not, body is used.
+    std::string delegate_to; 
+
     FuncSignature sig;
     std::vector<Stmt> body;
-    std::string delegate_to; 
 };
 
 // --- Node Declarations ---
 struct NodeDecl {
     SourceLoc loc{};
+    
+    bool is_controller = false;    
+    bool ignores_system = false;   
+
     std::string name;
     std::string type_name;
     std::string config_text;
 
-    std::vector<TopicDecl> topics;        // Topics owned by this node
+    std::vector<TopicDecl> topics;        
     std::vector<OnRequestDecl> requests;  
-    std::vector<OnListenDecl> listeners; 
+    std::vector<OnListenDecl> listeners; // Global listeners
     std::vector<FuncDecl> private_funcs; 
 };
 
@@ -112,13 +123,18 @@ struct ModeName {
 
 struct ModeDecl {
     SourceLoc loc{};
+    
+    bool ignores_system = false;   
+
     std::string node_name;
     ModeName mode_name;
+    
     std::vector<Stmt> body;
-    std::optional<ModeName> delegate_to;
+    
+    // NEW: Mode-specific listeners
+    std::vector<OnListenDecl> listeners;
 };
 
-// Note: TopicDecl is NOT here because it is inside NodeDecl now
 using Decl = std::variant<SystemModeDecl, NodeDecl, ModeDecl, FuncDecl>;
 
 struct Program {

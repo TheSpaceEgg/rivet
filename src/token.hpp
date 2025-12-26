@@ -17,6 +17,10 @@ enum class TokenKind {
     KwRequest, KwOnRequest, KwSilent, KwReturn,
     KwFunc, KwPublish, KwOnListen, KwTopic,
     
+    // NEW KEYWORDS
+    KwTransition, KwSystem, 
+    KwController, KwIgnore,
+
     // Types
     KwTypeInt, KwTypeFloat, KwTypeString, KwTypeBool,
 

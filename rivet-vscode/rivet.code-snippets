@@ -1,0 +1,19 @@
+{
+  "Function Definition": {
+    "prefix": "func",
+    "body": [
+      "func ${1:functionName}(${2:args: type}) -> ${3:type}"
+    ],
+    "description": "Create a new function"
+  },
+  "On Request": {
+    "prefix": "onreq",
+    "body": [
+      "onRequest ${1:name}() -> ${2:bool} {",
+      "\t$0",
+      "return true",
+      "}"
+    ],
+    "description": "Handle a request"
+  }
+}

@@ -1,0 +1,94 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Rivet System Architecture</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #f0f0f0; }
+        #graph { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        svg { width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <div id="graph">Loading Diagram...</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/viz.js/2.1.2/viz.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/viz.js/2.1.2/full.render.js"></script>
+    <script>
+        var dotLines = `digraph RivetArchitecture {
+  rankdir=LR;
+  node [fontname="Arial", shape=box, style=filled, fillcolor=white];
+  edge [fontname="Arial", fontsize=10];
+  graph [style=filled, fillcolor="#eeeeee"];
+
+  subgraph cluster_OBC {
+    label = "OBC : MainComputer";
+    style = rounded;
+    color = black;
+    bgcolor = white;
+    OBC [label="OBC", shape=component, fillcolor="#d0e0ff"];
+    OBC__state [label="sys/state\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    OBC__altitude [label="sys/alt\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    OBC__abort [label="sys/abort\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+  }
+
+  subgraph cluster_Gyroscope {
+    label = "Gyroscope : IMU";
+    style = rounded;
+    color = black;
+    bgcolor = white;
+    Gyroscope [label="Gyroscope", shape=component, fillcolor="#d0e0ff"];
+    Gyroscope__raw_z [label="sense/z\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+  }
+
+  subgraph cluster_Thrusters {
+    label = "Thrusters : Propulsion";
+    style = rounded;
+    color = black;
+    bgcolor = white;
+    Thrusters [label="Thrusters", shape=component, fillcolor="#d0e0ff"];
+    Thrusters__fuel [label="prop/fuel\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    Thrusters__active [label="prop/active\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+  }
+
+  subgraph cluster_Radio {
+    label = "Radio : CommLink";
+    style = rounded;
+    color = black;
+    bgcolor = white;
+    Radio [label="Radio", shape=component, fillcolor="#d0e0ff"];
+    Radio__uplink [label="comm/rx\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+  }
+    OBC -> OBC__state [color=blue];
+    OBC -> OBC__state [color=blue];
+    OBC -> OBC__abort [color=blue];
+  OBC__altitude -> Gyroscope [color=green];
+    Gyroscope -> Gyroscope__raw_z [color=blue];
+  OBC__abort -> Thrusters [color=green];
+    Thrusters -> Thrusters__active [color=blue];
+    Thrusters -> Thrusters__active [color=blue];
+    Thrusters -> Thrusters__fuel [color=blue];
+    Radio -> Radio__uplink [color=blue];
+    OBC -> OBC__state [color=blue];
+    OBC -> OBC__altitude [color=blue];
+    Gyroscope -> Radio [style=dashed, label="sendTelemetry"];
+    Thrusters -> OBC [style=dashed, label="stabilize"];
+    OBC -> Thrusters [style=dashed, label="fire"];
+}
+`;
+        var viz = new Viz();
+        viz.renderSVGElement(dotLines)
+            .then(function(element) {
+                var container = document.getElementById("graph");
+                container.innerHTML = "";
+                container.appendChild(element);
+            })
+            .catch(function(error) {
+                console.error(error);
+                document.getElementById("graph").innerHTML = 
+                    "<h3 style='color:red'>Error rendering graph</h3><pre>" + error + "</pre>";
+            });
+    </script>
+</body>
+</html>
+    

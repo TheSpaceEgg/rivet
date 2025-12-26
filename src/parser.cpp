@@ -208,6 +208,9 @@ FuncDecl Parser::parse_func_decl() {
     return f;
 }
 
+// ---------------------------------------------------------
+// UPDATED: onRequest Parser (With Brackets)
+// ---------------------------------------------------------
 OnRequestDecl Parser::parse_on_request_decl() {
     Token start = cur_;
     expect(TokenKind::KwOnRequest, "Expected 'onRequest'");
@@ -217,6 +220,11 @@ OnRequestDecl Parser::parse_on_request_decl() {
     if (match(TokenKind::KwDo)) {
         decl.delegate_to = parse_ident_text("Expected function name to delegate to");
         decl.sig.name = decl.delegate_to; 
+        
+        // NEW: Require brackets
+        expect(TokenKind::LParen, "Expected '()' after delegated function name");
+        expect(TokenKind::RParen, "Expected ')' after delegated function name");
+
         skip_newlines();
         return decl;
     }
@@ -229,6 +237,9 @@ OnRequestDecl Parser::parse_on_request_decl() {
     return decl;
 }
 
+// ---------------------------------------------------------
+// UPDATED: onListen Parser (With Brackets)
+// ---------------------------------------------------------
 OnListenDecl Parser::parse_on_listen_decl() {
     Token start = cur_;
     expect(TokenKind::KwOnListen, "Expected 'onListen'");
@@ -245,6 +256,11 @@ OnListenDecl Parser::parse_on_listen_decl() {
 
     if (match(TokenKind::KwDo)) {
         decl.delegate_to = parse_ident_text("Expected function name to delegate to");
+        
+        // NEW: Require brackets
+        expect(TokenKind::LParen, "Expected '()' after delegated function name");
+        expect(TokenKind::RParen, "Expected ')' after delegated function name");
+        
         skip_newlines();
         return decl;
     }
@@ -256,15 +272,28 @@ OnListenDecl Parser::parse_on_listen_decl() {
     return decl;
 }
 
+// ... (Rest of the file is identical to previous version)
 NodeDecl Parser::parse_node_decl() {
     Token startTok = cur_;
     expect(TokenKind::KwNode, "Expected 'node'");
     NodeDecl n;
     n.loc = startTok.loc;
+
+    if (match(TokenKind::KwController)) n.is_controller = true;
+
     n.name = parse_ident_text("Expected node name");
     expect(TokenKind::Colon, "Expected ':'");
     n.type_name = parse_ident_text("Expected node type");
     if (cur_.kind == TokenKind::LBrace) n.config_text = parse_brace_blob();
+
+    if (match(TokenKind::KwIgnore)) {
+        if (cur_.kind == TokenKind::KwSystem || cur_.kind == TokenKind::KwController) {
+            advance();
+            n.ignores_system = true;
+        } else {
+            diag_.error(cur_.loc, "Expected 'system' or 'controller' after 'ignore'");
+        }
+    }
 
     if (match(TokenKind::Newline)) {
         while (match(TokenKind::Newline)) {}
@@ -316,30 +345,40 @@ std::optional<Stmt> Parser::parse_stmt() {
         return ret;
     }
     
-    // Ident start: "handle.publish(...)" or "func(...)"
+    if (cur_.kind == TokenKind::KwTransition) {
+        TransitionStmt t;
+        t.loc = cur_.loc;
+        advance(); 
+        if (match(TokenKind::KwSystem)) {
+            t.is_system = true;
+        }
+        if (cur_.kind == TokenKind::String) {
+             t.target_state = strip_quotes(cur_.lexeme);
+             advance();
+        } else if (cur_.kind == TokenKind::Ident) {
+             t.target_state = std::string(cur_.lexeme);
+             advance();
+        } else {
+            diag_.error(cur_.loc, "Expected target state name");
+        }
+        return t;
+    }
+    
     if (cur_.kind == TokenKind::Ident) {
         Token nameTok = cur_;
         std::string identName(cur_.lexeme);
         advance();
         
-        // Handle "topic.publish(value)"
         if (cur_.kind == TokenKind::Dot) {
-            advance(); // consume dot
-            
-            // FIX: 'publish' is a Keyword, not an Ident. Check for it specifically.
+            advance(); 
             if (cur_.kind == TokenKind::KwPublish) {
-                advance(); // consume 'publish'
-                
+                advance(); 
                 PublishStmt pub;
                 pub.loc = nameTok.loc;
                 pub.topic_handle = identName;
-                
                 std::vector<std::string> args = parse_call_args();
-                if (!args.empty()) {
-                    pub.value = args[0];
-                } else {
-                    diag_.error(cur_.loc, "Expected value to publish");
-                }
+                if (!args.empty()) pub.value = args[0]; 
+                else diag_.error(cur_.loc, "Expected value to publish");
                 return pub;
             } else {
                 diag_.error(cur_.loc, "Unknown method (only .publish is supported)");
@@ -358,17 +397,7 @@ std::optional<Stmt> Parser::parse_stmt() {
         diag_.error(nameTok.loc, "Expected '(' or '.' after identifier");
         return std::nullopt;
     }
-    diag_.error(cur_.loc, "Expected statement");
-    advance();
     return std::nullopt;
-}
-
-void Parser::skip_indented_block_recovery() {
-    if (!match(TokenKind::Indent)) return;
-    while (cur_.kind != TokenKind::Eof) {
-        if (match(TokenKind::Dedent)) break;
-        advance();
-    }
 }
 
 ModeDecl Parser::parse_mode_decl() {
@@ -380,21 +409,42 @@ ModeDecl Parser::parse_mode_decl() {
     expect(TokenKind::Arrow, "Expected '->'");
     m.mode_name = parse_mode_name("Expected mode name");
 
-    if (match(TokenKind::KwDo)) {
-        m.delegate_to = parse_mode_name("Expected target mode");
-        if (match(TokenKind::Newline)) {
-            if (cur_.kind == TokenKind::Indent) {
-                diag_.error(cur_.loc, "A 'mode ... do ...' declaration cannot have a body.");
-                skip_indented_block_recovery();
-            } else {
+    if (match(TokenKind::KwIgnore)) {
+         if (cur_.kind == TokenKind::KwSystem || cur_.kind == TokenKind::KwController) {
+            advance();
+            m.ignores_system = true;
+        } else {
+            diag_.error(cur_.loc, "Expected 'system' or 'controller' after 'ignore'");
+        }
+    }
+
+    skip_newlines();
+
+    // Parse indented block
+    if (match(TokenKind::Indent)) {
+        while (cur_.kind != TokenKind::Eof && cur_.kind != TokenKind::Dedent) {
+            
+            // NEW: Check for onListen inside Mode
+            if (cur_.kind == TokenKind::KwOnListen) {
+                m.listeners.push_back(parse_on_listen_decl());
+            } 
+            // Normal Statements
+            else if (auto s = parse_stmt()) {
+                m.body.push_back(*s);
                 while (match(TokenKind::Newline)) {}
             }
+            // Empty lines
+            else if (match(TokenKind::Newline)) {
+                continue;
+            } 
+            else {
+                diag_.error(cur_.loc, "Expected statement or 'onListen' inside mode");
+                while (cur_.kind != TokenKind::Newline && cur_.kind != TokenKind::Eof) advance();
+            }
         }
-        skip_newlines();
-        return m;
+        expect(TokenKind::Dedent, "Expected end of mode block");
     }
-    m.body = parse_indented_block_stmts();
-    skip_newlines();
+
     return m;
 }
 

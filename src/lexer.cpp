@@ -17,6 +17,12 @@ static TokenKind keyword_kind(std::string_view s) {
         {"onListen",   TokenKind::KwOnListen},
         {"topic",      TokenKind::KwTopic},
         
+        // NEW MAPPINGS
+        {"transition", TokenKind::KwTransition},
+        {"system",     TokenKind::KwSystem},
+        {"controller", TokenKind::KwController},
+        {"ignore",     TokenKind::KwIgnore},
+        
         {"int",        TokenKind::KwTypeInt},
         {"float",      TokenKind::KwTypeFloat},
         {"string",     TokenKind::KwTypeString},
@@ -109,6 +115,9 @@ Token Lexer::ident() {
 
 Token Lexer::number() {
     int s = i_;
+    // Handle negative numbers
+    if (cur() == '-') i_++;
+
     while (std::isdigit((unsigned char)cur())) i_++;
     
     if (cur() == '.' && std::isdigit((unsigned char)peek(1))) {
@@ -174,6 +183,17 @@ Token Lexer::next() {
     if (cur() == '"') return string();
 
     int s = i_;
+    // Check for negative number or arrow
+    if (cur() == '-') {
+        if (peek(1) == '>') { 
+            i_ += 2; 
+            return make(TokenKind::Arrow, s, i_); 
+        }
+        if (std::isdigit((unsigned char)peek(1))) {
+            return number();
+        }
+    }
+
     if (cur() == '.') { i_++; return make(TokenKind::Dot, s, i_); }
     if (cur() == ':') { i_++; return make(TokenKind::Colon, s, i_); }
     if (cur() == ',') { i_++; return make(TokenKind::Comma, s, i_); }
@@ -182,7 +202,6 @@ Token Lexer::next() {
     if (cur() == '{') { i_++; return make(TokenKind::LBrace, s, i_); }
     if (cur() == '}') { i_++; return make(TokenKind::RBrace, s, i_); }
     if (cur() == '=' && peek(1) != '=') { i_++; return make(TokenKind::Assign, s, i_); }
-    if (cur() == '-' && peek(1) == '>') { i_ += 2; return make(TokenKind::Arrow, s, i_); }
 
     diag_.error(src_.loc_from_offset(i_), "Unexpected character");
     i_++;
