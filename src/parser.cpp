@@ -110,26 +110,27 @@ std::vector<std::string> Parser::parse_call_args() {
     return args;
 }
 
-// Helper to parse print args without parentheses (space/comma separated)
 std::vector<std::string> Parser::parse_print_args() {
     std::vector<std::string> args;
-    while (cur_.kind == TokenKind::String || cur_.kind == TokenKind::Ident || 
-           cur_.kind == TokenKind::Int || cur_.kind == TokenKind::Float || 
-           cur_.kind == TokenKind::KwTypeBool) {
-        
-        // Handle String specially to keep quotes for AST printer/codegen (or strip them? let's keep them logic consistent)
-        // Actually for log arguments we probably want to pass the raw token text so the validator can resolve it later.
-        if (cur_.kind == TokenKind::String) {
-             args.push_back("\"" + strip_quotes(cur_.lexeme) + "\"");
-        } else {
-             args.push_back(std::string(cur_.lexeme));
-        }
+    
+    // ENFORCE: Only one argument allowed, and it MUST be a string
+    if (cur_.kind == TokenKind::String) {
+        // We keep the quotes so the codegen regex can find the {braces}
+        args.push_back(std::string(cur_.lexeme));
         advance();
-        if (!match(TokenKind::Comma)) break; 
+    } else {
+        diag_.error(cur_.loc, "Format Error: print/log now requires a single interpolated string (e.g., \"val: {x}\")");
+        advance();
     }
+
+    // ERROR TRIGGER: If there is a comma, it's now an illegal legacy syntax
+    if (cur_.kind == TokenKind::Comma) {
+        diag_.error(cur_.loc, "Legacy Syntax: Commas are no longer supported. Use \"{variable}\" interpolation instead.");
+        while (cur_.kind != TokenKind::Newline && cur_.kind != TokenKind::Eof) advance();
+    }
+
     return args;
 }
-
 TypeInfo Parser::parse_type() {
     TypeInfo t;
     if (match(TokenKind::KwTypeInt))    { t.base = ValType::Int; return t; }
@@ -204,12 +205,11 @@ std::vector<Stmt> Parser::parse_indented_block_stmts() {
         if (match(TokenKind::Dedent)) break;
         if (match(TokenKind::Newline)) continue;
         
-        if ((cur_.kind == TokenKind::KwMode || cur_.kind == TokenKind::KwNode || 
-             cur_.kind == TokenKind::KwSystemMode || cur_.kind == TokenKind::KwFunc || 
-             cur_.kind == TokenKind::KwTopic) &&
-            cur_.loc.col == 1) break;
-
-        if (auto s = parse_stmt()) stmts.push_back(*s);
+        if (auto s = parse_stmt()) {
+            stmts.push_back(*s);
+        } else {
+            advance(); // Infinite loop protection
+        }
         while (match(TokenKind::Newline)) {}
     }
     return stmts;
@@ -237,8 +237,8 @@ OnRequestDecl Parser::parse_on_request_decl() {
     if (match(TokenKind::KwDo)) {
         decl.delegate_to = parse_ident_text("Expected function name to delegate to");
         decl.sig.name = decl.delegate_to; 
-        expect(TokenKind::LParen, "Expected '()' after delegated function name");
-        expect(TokenKind::RParen, "Expected ')' after delegated function name");
+        expect(TokenKind::LParen, "Expected '()'");
+        expect(TokenKind::RParen, "Expected ')'");
         skip_newlines();
         return decl;
     }
@@ -257,18 +257,18 @@ OnListenDecl Parser::parse_on_listen_decl() {
     OnListenDecl decl;
     decl.loc = start.loc;
     
-    std::string first = parse_ident_text("Expected topic handle name");
+    std::string first = parse_ident_text("Expected topic handle");
     if (match(TokenKind::Dot)) {
         decl.source_node = first;
-        decl.topic_name = parse_ident_text("Expected topic name after '.'");
+        decl.topic_name = parse_ident_text("Expected topic name");
     } else {
         decl.topic_name = first;
     }
 
     if (match(TokenKind::KwDo)) {
-        decl.delegate_to = parse_ident_text("Expected function name to delegate to");
-        expect(TokenKind::LParen, "Expected '()' after delegated function name");
-        expect(TokenKind::RParen, "Expected ')' after delegated function name");
+        decl.delegate_to = parse_ident_text("Expected function");
+        expect(TokenKind::LParen, "Expected '()'");
+        expect(TokenKind::RParen, "Expected ')'");
         skip_newlines();
         return decl;
     }
@@ -297,8 +297,6 @@ NodeDecl Parser::parse_node_decl() {
         if (cur_.kind == TokenKind::KwSystem || cur_.kind == TokenKind::KwController) {
             advance();
             n.ignores_system = true;
-        } else {
-            diag_.error(cur_.loc, "Expected 'system' or 'controller' after 'ignore'");
         }
     }
 
@@ -306,22 +304,14 @@ NodeDecl Parser::parse_node_decl() {
         while (match(TokenKind::Newline)) {}
         if (match(TokenKind::Indent)) {
             while (cur_.kind != TokenKind::Eof && cur_.kind != TokenKind::Dedent) {
-                if (cur_.kind == TokenKind::KwOnRequest) {
-                    n.requests.push_back(parse_on_request_decl());
-                } else if (cur_.kind == TokenKind::KwOnListen) { 
-                    n.listeners.push_back(parse_on_listen_decl());
-                } else if (cur_.kind == TokenKind::KwFunc) {
-                    n.private_funcs.push_back(parse_func_decl());
-                } else if (cur_.kind == TokenKind::KwTopic) { 
-                    n.topics.push_back(parse_topic_decl());
-                } else if (match(TokenKind::Newline)) {
-                    continue;
-                } else {
-                    diag_.error(cur_.loc, "Expected 'onRequest', 'onListen', 'topic', or 'func' inside node body");
-                    while (cur_.kind != TokenKind::Newline && cur_.kind != TokenKind::Eof) advance();
-                }
+                if (cur_.kind == TokenKind::KwOnRequest) n.requests.push_back(parse_on_request_decl());
+                else if (cur_.kind == TokenKind::KwOnListen) n.listeners.push_back(parse_on_listen_decl());
+                else if (cur_.kind == TokenKind::KwFunc) n.private_funcs.push_back(parse_func_decl());
+                else if (cur_.kind == TokenKind::KwTopic) n.topics.push_back(parse_topic_decl());
+                else if (match(TokenKind::Newline)) continue;
+                else advance();
             }
-            expect(TokenKind::Dedent, "Expected end of node block");
+            expect(TokenKind::Dedent, "Expected Dedent");
         }
     }
     skip_newlines();
@@ -329,7 +319,6 @@ NodeDecl Parser::parse_node_decl() {
 }
 
 std::optional<Stmt> Parser::parse_stmt() {
-    // NEW: Log & Print Support
     if (cur_.kind == TokenKind::KwPrint) {
         LogStmt log;
         log.loc = cur_.loc;
@@ -341,27 +330,27 @@ std::optional<Stmt> Parser::parse_stmt() {
     if (cur_.kind == TokenKind::KwLog) {
         LogStmt log;
         log.loc = cur_.loc;
-        advance();
+        advance(); // consume 'log'
         
-        // Optional level
+        // 1. Consume the Level Keyword FIRST
         if (match(TokenKind::KwError))      log.level = LogLevel::Error;
         else if (match(TokenKind::KwWarn))  log.level = LogLevel::Warn;
         else if (match(TokenKind::KwInfo))  log.level = LogLevel::Info;
         else if (match(TokenKind::KwDebug)) log.level = LogLevel::Debug;
-        else log.level = LogLevel::Info; // Default
+        else log.level = LogLevel::Info; // Default if omitted
 
-        log.args = parse_print_args();
+        // 2. NOW parse the single interpolated string
+        log.args = parse_print_args(); 
         return log;
     }
-
     if (cur_.kind == TokenKind::KwRequest) {
         RequestStmt req;
         req.loc = cur_.loc;
         advance(); 
         if (match(TokenKind::KwSilent)) req.is_silent = true;
-        req.target_node = parse_ident_text("Expected target node name");
+        req.target_node = parse_ident_text("Expected node");
         expect(TokenKind::Dot, "Expected '.'");
-        req.func_name = parse_ident_text("Expected function name");
+        req.func_name = parse_ident_text("Expected func");
         req.args = parse_call_args(); 
         return req;
     }
@@ -369,65 +358,38 @@ std::optional<Stmt> Parser::parse_stmt() {
         ReturnStmt ret;
         ret.loc = cur_.loc;
         advance();
-        if (cur_.kind == TokenKind::Ident || cur_.kind == TokenKind::Int ||
-            cur_.kind == TokenKind::Float || cur_.kind == TokenKind::String) {
+        if (cur_.kind == TokenKind::Ident || cur_.kind == TokenKind::Int || cur_.kind == TokenKind::String) {
             ret.value = std::string(cur_.lexeme);
             advance();
         }
         return ret;
     }
-    
     if (cur_.kind == TokenKind::KwTransition) {
         TransitionStmt t;
         t.loc = cur_.loc;
         advance(); 
-        if (match(TokenKind::KwSystem)) {
-            t.is_system = true;
-        }
-        if (cur_.kind == TokenKind::String) {
-             t.target_state = strip_quotes(cur_.lexeme);
-             advance();
-        } else if (cur_.kind == TokenKind::Ident) {
-             t.target_state = std::string(cur_.lexeme);
-             advance();
-        } else {
-            diag_.error(cur_.loc, "Expected target state name");
-        }
+        if (match(TokenKind::KwSystem)) t.is_system = true;
+        if (cur_.kind == TokenKind::String) { t.target_state = strip_quotes(cur_.lexeme); advance(); }
+        else { t.target_state = parse_ident_text("Expected state"); }
         return t;
     }
-    
     if (cur_.kind == TokenKind::Ident) {
         Token nameTok = cur_;
         std::string identName(cur_.lexeme);
         advance();
-        
         if (cur_.kind == TokenKind::Dot) {
             advance(); 
-            if (cur_.kind == TokenKind::KwPublish) {
-                advance(); 
-                PublishStmt pub;
-                pub.loc = nameTok.loc;
-                pub.topic_handle = identName;
-                std::vector<std::string> args = parse_call_args();
-                if (!args.empty()) pub.value = args[0]; 
-                else diag_.error(cur_.loc, "Expected value to publish");
+            if (match(TokenKind::KwPublish)) {
+                PublishStmt pub; pub.loc = nameTok.loc; pub.topic_handle = identName;
+                auto args = parse_call_args();
+                if (!args.empty()) pub.value = args[0];
                 return pub;
-            } else {
-                diag_.error(cur_.loc, "Unknown method (only .publish is supported)");
-                return std::nullopt;
             }
         }
-        
         if (cur_.kind == TokenKind::LParen) {
-            CallStmt call;
-            call.loc = nameTok.loc;
-            call.callee = identName;
-            call.args = parse_call_args();
-            return call;
+            CallStmt call; call.loc = nameTok.loc; call.callee = identName;
+            call.args = parse_call_args(); return call;
         } 
-        
-        diag_.error(nameTok.loc, "Expected '(' or '.' after identifier");
-        return std::nullopt;
     }
     return std::nullopt;
 }
@@ -437,7 +399,7 @@ ModeDecl Parser::parse_mode_decl() {
     expect(TokenKind::KwMode, "Expected 'mode'");
     ModeDecl m;
     m.loc = startTok.loc;
-    m.node_name = parse_ident_text("Expected node name");
+    m.node_name = parse_ident_text("Expected node");
     expect(TokenKind::Arrow, "Expected '->'");
     m.mode_name = parse_mode_name("Expected mode name");
 
@@ -445,8 +407,6 @@ ModeDecl Parser::parse_mode_decl() {
          if (cur_.kind == TokenKind::KwSystem || cur_.kind == TokenKind::KwController) {
             advance();
             m.ignores_system = true;
-        } else {
-            diag_.error(cur_.loc, "Expected 'system' or 'controller' after 'ignore'");
         }
     }
 
@@ -461,17 +421,10 @@ ModeDecl Parser::parse_mode_decl() {
                 m.body.push_back(*s);
                 while (match(TokenKind::Newline)) {}
             }
-            else if (match(TokenKind::Newline)) {
-                continue;
-            } 
-            else {
-                diag_.error(cur_.loc, "Expected statement or 'onListen' inside mode");
-                while (cur_.kind != TokenKind::Newline && cur_.kind != TokenKind::Eof) advance();
-            }
+            else advance();
         }
-        expect(TokenKind::Dedent, "Expected end of mode block");
+        expect(TokenKind::Dedent, "Expected Dedent");
     }
-
     return m;
 }
 
@@ -479,15 +432,12 @@ Program Parser::parse_program() {
     Program p;
     skip_newlines();
     while (cur_.kind != TokenKind::Eof) {
-        if (cur_.kind == TokenKind::KwSystemMode) { p.decls.emplace_back(parse_systemmode_decl()); continue; }
-        if (cur_.kind == TokenKind::KwNode)       { p.decls.emplace_back(parse_node_decl()); continue; }
-        if (cur_.kind == TokenKind::KwMode)       { p.decls.emplace_back(parse_mode_decl()); continue; }
-        if (cur_.kind == TokenKind::KwFunc)       { p.decls.emplace_back(parse_func_decl()); continue; }
-        
-        if (match(TokenKind::Newline)) continue;
-
-        diag_.error(cur_.loc, "Expected top-level declaration");
-        advance();
+        if (cur_.kind == TokenKind::KwSystemMode) p.decls.emplace_back(parse_systemmode_decl());
+        else if (cur_.kind == TokenKind::KwNode) p.decls.emplace_back(parse_node_decl());
+        else if (cur_.kind == TokenKind::KwMode) p.decls.emplace_back(parse_mode_decl());
+        else if (cur_.kind == TokenKind::KwFunc) p.decls.emplace_back(parse_func_decl());
+        else if (match(TokenKind::Newline)) continue;
+        else advance(); // Infinite loop protection
     }
     return p;
 }

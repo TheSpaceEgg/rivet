@@ -1,7 +1,6 @@
 #include "lexer.hpp"
 #include <cctype>
 #include <unordered_map>
-#include <iostream> 
 
 static TokenKind keyword_kind(std::string_view s) {
     static const std::unordered_map<std::string_view, TokenKind> kw = {
@@ -61,17 +60,12 @@ void Lexer::emit_newline() {
 void Lexer::handle_indent() {
     int s = i_;
     int spaces = 0;
-    while (cur() == ' ' || cur() == '\t') { 
+    while (!eof() && (cur() == ' ' || cur() == '\t')) { 
         if (cur() == '\t') spaces += 4; 
         else spaces++;
         i_++; 
     }
-
-    if (cur() == '\n' || cur() == '\r') {
-        at_line_start_ = false; 
-        return; 
-    }
-
+    if (cur() == '\n' || cur() == '\r' || eof()) { at_line_start_ = false; return; }
     int prev = indent_.back();
     if (spaces > prev) {
         indent_.push_back(spaces);
@@ -86,33 +80,16 @@ void Lexer::handle_indent() {
 }
 
 void Lexer::skip_ws() {
-    // UPDATED: Now skips anything that isSpace declares as space
-    while (std::isspace((unsigned char)cur()) && cur() != '\n' && cur() != '\r') i_++;
+    while (!eof() && std::isspace((unsigned char)cur()) && cur() != '\n' && cur() != '\r') i_++;
 }
 
 void Lexer::skip_line_comment() {
     while (!eof() && cur() != '\n' && cur() != '\r') i_++;
 }
 
-void Lexer::skip_block_comment() {
-    i_ += 2; 
-    while (!eof()) {
-        if (cur() == '*' && peek(1) == '/') {
-            i_ += 2;
-            return;
-        }
-        if (cur() == '\n' || cur() == '\r') {
-            emit_newline();
-        } else {
-            i_++;
-        }
-    }
-    diag_.error(src_.loc_from_offset(i_), "Unterminated block comment");
-}
-
 Token Lexer::ident() {
     int s = i_;
-    while (std::isalnum((unsigned char)cur()) || cur() == '_') i_++;
+    while (!eof() && (std::isalnum((unsigned char)cur()) || cur() == '_')) i_++;
     auto t = make(TokenKind::Ident, s, i_);
     t.kind = keyword_kind(t.lexeme);
     return t;
@@ -121,11 +98,9 @@ Token Lexer::ident() {
 Token Lexer::number() {
     int s = i_;
     if (cur() == '-') i_++;
-    while (std::isdigit((unsigned char)cur())) i_++;
-    
+    while (!eof() && std::isdigit((unsigned char)cur())) i_++;
     if (cur() == '.' && std::isdigit((unsigned char)peek(1))) {
-        i_++; 
-        while (std::isdigit((unsigned char)cur())) i_++;
+        i_++; while (!eof() && std::isdigit((unsigned char)cur())) i_++;
         return make(TokenKind::Float, s, i_);
     }
     return make(TokenKind::Int, s, i_);
@@ -133,13 +108,7 @@ Token Lexer::number() {
 
 Token Lexer::string() {
     int s = i_++;
-    while (!eof() && cur() != '"') {
-        if (cur() == '\n' || cur() == '\r') {
-            diag_.error(src_.loc_from_offset(i_), "Newline in string literal");
-            break;
-        }
-        i_++;
-    }
+    while (!eof() && cur() != '"') i_++;
     if (!eof()) i_++;
     return make(TokenKind::String, s, i_);
 }
@@ -150,50 +119,26 @@ Token Lexer::next() {
         pending_.pop_front();
         return t;
     }
-
     if (eof()) {
-        if (indent_.size() > 1) {
-            indent_.pop_back();
-            return make(TokenKind::Dedent, i_, i_);
-        }
+        if (indent_.size() > 1) { indent_.pop_back(); return make(TokenKind::Dedent, i_, i_); }
         return make(TokenKind::Eof, i_, i_);
     }
-
     if (at_line_start_) {
         handle_indent();
         if (!pending_.empty()) return next();
     }
-
-    if (cur() == '\n' || cur() == '\r') {
-        emit_newline();
-        return next();
-    }
-
+    if (cur() == '\n' || cur() == '\r') { emit_newline(); return next(); }
     skip_ws();
-
-    if (cur() == '/' && peek(1) == '/') {
-        skip_line_comment();
-        return next();
-    }
-    if (cur() == '/' && peek(1) == '*') {
-        skip_block_comment();
-        return next();
-    }
-
+    if (cur() == '/' && peek(1) == '/') { skip_line_comment(); return next(); }
     if (std::isalpha((unsigned char)cur()) || cur() == '_') return ident();
     if (std::isdigit((unsigned char)cur())) return number();
     if (cur() == '"') return string();
-
-    int s = i_;
     
-    // UPDATED: Better handling for Minus vs Arrow vs Negative Number
+    int s = i_;
     if (cur() == '-') {
         if (peek(1) == '>') { i_ += 2; return make(TokenKind::Arrow, s, i_); }
-        if (std::isdigit((unsigned char)peek(1))) return number();
-        // If it's just a '-', we currently consider it invalid or just a char. 
-        // We'll treat it as invalid for now unless we add Math operators.
+        return number();
     }
-
     if (cur() == '.') { i_++; return make(TokenKind::Dot, s, i_); }
     if (cur() == ':') { i_++; return make(TokenKind::Colon, s, i_); }
     if (cur() == ',') { i_++; return make(TokenKind::Comma, s, i_); }
@@ -201,15 +146,8 @@ Token Lexer::next() {
     if (cur() == ')') { i_++; return make(TokenKind::RParen, s, i_); }
     if (cur() == '{') { i_++; return make(TokenKind::LBrace, s, i_); }
     if (cur() == '}') { i_++; return make(TokenKind::RBrace, s, i_); }
-    if (cur() == '=' && peek(1) != '=') { i_++; return make(TokenKind::Assign, s, i_); }
-
-    // If we get here, it's a character we don't know.
-    // If it is 'printable', show it. If not, it's invisible garbage.
-    if (std::isprint((unsigned char)cur())) {
-        diag_.error(src_.loc_from_offset(i_), std::string("Unexpected character: '") + cur() + "'");
-    } else {
-        diag_.error(src_.loc_from_offset(i_), "Unexpected invisible character (0x" + std::to_string((int)cur()) + ")");
-    }
-    i_++;
+    if (cur() == '=') { i_++; return make(TokenKind::Assign, s, i_); }
+    
+    i_++; // Safety advance
     return make(TokenKind::Invalid, s, i_);
 }

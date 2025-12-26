@@ -35,7 +35,7 @@ node LoggerNode : DataRecorder ignore system
   onListen SensorArray.reading do recordData()
 
   func recordData(val: float) -> bool
-    print "DISK RECORD: ", val
+    print "DISK RECORD: {val}"
     return true
 
 // --- Startup Sequence Logic ---
@@ -51,6 +51,10 @@ mode CommandCenter->Startup
   request CommandCenter.goLive()
 
 mode SensorArray->Active
+  log error "This is a test"
+  log warn "This is a test"
+  log info "This is a test"
+  log debug "This is a test"
   log "SensorArray detected Active system state."
   print "Sampling at high frequency..."
 

@@ -1,6 +1,8 @@
 #include "codegen_cpp.hpp"
 #include <variant>
 #include <string>
+#include <regex>
+#include <sstream>
 
 const char* RIVET_RUNTIME = R"(
 #include <iostream>
@@ -9,6 +11,7 @@ const char* RIVET_RUNTIME = R"(
 #include <functional>
 #include <thread>
 #include <chrono>
+#include <sstream>
 
 enum class LogLevel { INFO, WARN, ERROR, DEBUG };
 struct Logger {
@@ -58,6 +61,26 @@ static std::string to_cpp_type(const TypeInfo& t) {
     }
 }
 
+static void gen_interpolated_string(const std::string& input, std::ostream& os) {
+    std::regex re("\\{([^}]+)\\}");
+    std::string s = input;
+    if (s.size() >= 2 && s.front() == '"' && s.back() == '"') s = s.substr(1, s.size() - 2);
+
+    auto it = std::sregex_iterator(s.begin(), s.end(), re);
+    auto end = std::sregex_iterator();
+    size_t last_pos = 0;
+
+    for (; it != end; ++it) {
+        std::smatch match = *it;
+        if ((size_t)match.position() > last_pos) {
+            os << " << \"" << s.substr(last_pos, match.position() - last_pos) << "\"";
+        }
+        os << " << " << match.str(1);
+        last_pos = match.position() + match.length();
+    }
+    if (last_pos < s.size()) os << " << \"" << s.substr(last_pos) << "\"";
+}
+
 static void gen_stmts(const std::vector<Stmt>& stmts, std::ostream& os, int depth) {
     auto indent = [&](int d) { for (int i = 0; i < d; ++i) os << "    "; };
     for (const auto& stmt : stmts) {
@@ -65,19 +88,22 @@ static void gen_stmts(const std::vector<Stmt>& stmts, std::ostream& os, int dept
         if (auto log = std::get_if<LogStmt>(&stmt)) {
             if (log->level == LogLevel::Print) {
                 os << "std::cout";
-                for (const auto& arg : log->args) os << " << " << arg;
+                for (const auto& arg : log->args) {
+                    if (!arg.empty() && arg[0] == '"') gen_interpolated_string(arg, os);
+                    else os << " << " << arg;
+                }
                 os << " << std::endl;\n";
             } else {
                 std::string lvl = "LogLevel::INFO";
                 if (log->level == LogLevel::Warn) lvl = "LogLevel::WARN";
                 if (log->level == LogLevel::Error) lvl = "LogLevel::ERROR";
                 if (log->level == LogLevel::Debug) lvl = "LogLevel::DEBUG";
-                os << "Logger::log(this->name, " << lvl << ", std::string(\"\")";
+                os << "{ std::stringstream _ss; _ss";
                 for (const auto& arg : log->args) {
-                    if (!arg.empty() && arg[0] == '"') os << " + " << arg;
-                    else os << " + std::to_string(" << arg << ")";
+                    if (!arg.empty() && arg[0] == '"') gen_interpolated_string(arg, os);
+                    else os << " << " << arg;
                 }
-                os << ");\n";
+                os << "; Logger::log(this->name, " << lvl << ", _ss.str()); }\n";
             }
         } else if (auto pub = std::get_if<PublishStmt>(&stmt)) {
             os << "this->" << pub->topic_handle << ".publish(" << pub->value << ");\n";
@@ -100,70 +126,51 @@ static void gen_stmts(const std::vector<Stmt>& stmts, std::ostream& os, int dept
 
 void generate_cpp(const Program& p, std::ostream& os) {
     os << RIVET_RUNTIME << "\n";
-
     for (const auto& decl : p.decls) {
         if (auto n = std::get_if<NodeDecl>(&decl)) {
             os << "class " << n->name << ";\nextern " << n->name << "* " << n->name << "_inst;\n";
         }
     }
-
     for (const auto& decl : p.decls) {
         if (auto n = std::get_if<NodeDecl>(&decl)) {
             os << "\nclass " << n->name << " {\npublic:\n";
             os << "    std::string name = \"" << n->name << "\";\n";
             os << "    std::string current_state = \"Init\";\n";
-            for (const auto& t : n->topics) 
-                os << "    Topic<" << to_cpp_type(t.type) << "> " << t.name << ";\n";
-
+            for (const auto& t : n->topics) os << "    Topic<" << to_cpp_type(t.type) << "> " << t.name << ";\n";
             auto gen_func = [&](const FuncSignature& sig, const std::vector<Stmt>& body) {
                 os << "    " << to_cpp_type(sig.return_type) << " " << sig.name << "(";
                 for (size_t i=0; i<sig.params.size(); ++i) 
                     os << (i>0?", ":"") << to_cpp_type(sig.params[i].type) << " " << sig.params[i].name;
-                os << ") {\n"; 
-                gen_stmts(body, os, 2); 
+                os << ") {\n"; gen_stmts(body, os, 2); 
                 if (sig.return_type.base == ValType::Bool) os << "        return true;\n";
                 os << "    }\n";
             };
-
             for (const auto& r : n->requests) gen_func(r.sig, r.body);
             for (const auto& f : n->private_funcs) gen_func(f.sig, f.body);
-
-            // Handle Init Logic
             os << "    void init() {\n";
             for (const auto& d : p.decls) {
                 if (auto m = std::get_if<ModeDecl>(&d))
                     if (m->node_name == n->name && m->mode_name.text == "Init") gen_stmts(m->body, os, 2);
             }
             os << "    }\n";
-
-            // Handle System Mode Reaction
             os << "    void onSystemChange(std::string sys_mode) {\n";
             for (const auto& d : p.decls) {
-                if (auto m = std::get_if<ModeDecl>(&d)) {
+                if (auto m = std::get_if<ModeDecl>(&d))
                     if (m->node_name == n->name && m->mode_name.text != "Init") {
                         os << "        if (sys_mode == \"" << m->mode_name.text << "\") {\n";
                         gen_stmts(m->body, os, 3);
                         os << "        }\n";
                     }
-                }
             }
             os << "    }\n};\n";
             os << n->name << "* " << n->name << "_inst = nullptr;\n";
         }
     }
-
     os << "\nint main() {\n";
     for (const auto& decl : p.decls)
         if (auto n = std::get_if<NodeDecl>(&decl)) os << "    " << n->name << "_inst = new " << n->name << "();\n";
-
-    // Setup Reaction Registry
-    for (const auto& decl : p.decls) {
-        if (auto n = std::get_if<NodeDecl>(&decl)) {
-            os << "    SystemManager::on_transition.push_back([](std::string m) { " << n->name << "_inst->onSystemChange(m); });\n";
-        }
-    }
-
-    // Wiring
+    for (const auto& decl : p.decls)
+        if (auto n = std::get_if<NodeDecl>(&decl)) os << "    SystemManager::on_transition.push_back([](std::string m) { " << n->name << "_inst->onSystemChange(m); });\n";
     for (const auto& decl : p.decls) {
         if (auto n = std::get_if<NodeDecl>(&decl)) {
             for (const auto& l : n->listeners) {
@@ -173,21 +180,9 @@ void generate_cpp(const Program& p, std::ostream& os) {
                 os << "    });\n";
             }
         }
-        if (auto m = std::get_if<ModeDecl>(&decl)) {
-            for (const auto& l : m->listeners) {
-                os << "    " << (l.source_node.empty()?m->node_name:l.source_node) << "_inst->" << l.topic_name << ".subscribe([=](auto val) {\n";
-                os << "        if (" << m->node_name << "_inst->current_state == \"" << m->mode_name.text << "\") {\n";
-                if (l.delegate_to.empty()) gen_stmts(l.body, os, 3);
-                else os << "            " << m->node_name << "_inst->" << l.delegate_to << "(val);\n";
-                os << "        }\n    });\n";
-            }
-        }
     }
-
     for (const auto& decl : p.decls)
         if (auto n = std::get_if<NodeDecl>(&decl)) os << "    " << n->name << "_inst->init();\n";
-
     os << "    std::cout << \"--- Rivet System Started ---\" << std::endl;\n";
-    os << "    while(true) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }\n";
-    os << "    return 0;\n}\n";
+    os << "    while(true) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }\n    return 0;\n}\n";
 }

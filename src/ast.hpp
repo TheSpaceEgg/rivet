@@ -61,12 +61,12 @@ struct TransitionStmt {
     std::string target_state;
 };
 
-// NEW: Log Statement
 enum class LogLevel { Print, Info, Warn, Error, Debug };
 
 struct LogStmt {
     SourceLoc loc{};
     LogLevel level = LogLevel::Info;
+    // Args are preserved as raw strings; codegen handles the {interpolation}
     std::vector<std::string> args;
 };
 
@@ -124,6 +124,7 @@ struct ModeDecl {
     std::string node_name;
     ModeName mode_name;
     std::vector<Stmt> body;
+    // Updated: Mode bodies can now contain scoped listeners
     std::vector<OnListenDecl> listeners;
 };
 

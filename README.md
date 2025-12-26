@@ -96,8 +96,8 @@ mode Camera->Scanning
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `log` | Formatted console output with node context | `log warn "Low Voltage"` |
-| `print` | Raw standard output | `print "Val: ", x` |
+| `log` | Formatted console output with node context | `log warn "Battery at {val}%"` |
+| `print` | Raw standard output | `print "DISK RECORD: {val}"` |
 | `transition` | Changes node or global system state | `transition system "Active"` |
 | `publish` | Broadens data to a topic | `state.publish("READY")` |
 | `return` | Exits a function with a return value | `return true` |

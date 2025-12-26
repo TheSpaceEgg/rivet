@@ -5,6 +5,7 @@
 #include <functional>
 #include <thread>
 #include <chrono>
+#include <sstream>
 
 enum class LogLevel { INFO, WARN, ERROR, DEBUG };
 struct Logger {
@@ -57,24 +58,24 @@ public:
     Topic<int> heartbeat;
     Topic<bool> system_ready;
     bool activate() {
-        Logger::log(this->name, LogLevel::INFO, std::string("") + "Activating System Phase: Startup");
+        { std::stringstream _ss; _ss << "Activating System Phase: Startup"; Logger::log(this->name, LogLevel::INFO, _ss.str()); }
         SystemManager::set_mode("Startup");
         return true;
         return true;
     }
     bool goLive() {
-        Logger::log(this->name, LogLevel::WARN, std::string("") + "System GO LIVE");
+        { std::stringstream _ss; _ss << "System GO LIVE"; Logger::log(this->name, LogLevel::WARN, _ss.str()); }
         SystemManager::set_mode("Active");
         return true;
         return true;
     }
     void init() {
-        Logger::log(this->name, LogLevel::INFO, std::string("") + "Initializing CommandCenter...");
+        { std::stringstream _ss; _ss << "Initializing CommandCenter..."; Logger::log(this->name, LogLevel::INFO, _ss.str()); }
         CommandCenter_inst->activate();
     }
     void onSystemChange(std::string sys_mode) {
         if (sys_mode == "Startup") {
-            Logger::log(this->name, LogLevel::INFO, std::string("") + "CommandCenter in Startup. Signaling sensors...");
+            { std::stringstream _ss; _ss << "CommandCenter in Startup. Signaling sensors..."; Logger::log(this->name, LogLevel::INFO, _ss.str()); }
             this->system_ready.publish(true);
             CommandCenter_inst->goLive();
         }
@@ -88,7 +89,7 @@ public:
     std::string current_state = "Init";
     Topic<double> reading;
     bool beginSampling(bool ready) {
-        Logger::log(this->name, LogLevel::INFO, std::string("") + "Sensors online. Starting sampling...");
+        { std::stringstream _ss; _ss << "Sensors online. Starting sampling..."; Logger::log(this->name, LogLevel::INFO, _ss.str()); }
         this->reading.publish(42.0);
         return true;
         return true;
@@ -97,7 +98,11 @@ public:
     }
     void onSystemChange(std::string sys_mode) {
         if (sys_mode == "Active") {
-            Logger::log(this->name, LogLevel::INFO, std::string("") + "SensorArray detected Active system state.");
+            { std::stringstream _ss; _ss << "This is a test"; Logger::log(this->name, LogLevel::ERROR, _ss.str()); }
+            { std::stringstream _ss; _ss << "This is a test"; Logger::log(this->name, LogLevel::WARN, _ss.str()); }
+            { std::stringstream _ss; _ss << "This is a test"; Logger::log(this->name, LogLevel::INFO, _ss.str()); }
+            { std::stringstream _ss; _ss << "This is a test"; Logger::log(this->name, LogLevel::DEBUG, _ss.str()); }
+            { std::stringstream _ss; _ss << "SensorArray detected Active system state."; Logger::log(this->name, LogLevel::INFO, _ss.str()); }
             std::cout << "Sampling at high frequency..." << std::endl;
         }
     }
