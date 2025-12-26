@@ -1,0 +1,25 @@
+{
+  "name": "rivet-lang",
+  "displayName": "Rivet Language Support",
+  "description": "Syntax highlighting for Rivet (.rv)",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "rivet",
+      "aliases": ["Rivet", "rivet"],
+      "extensions": [".rv"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "rivet",
+      "scopeName": "source.rivet",
+      "path": "./syntaxes/rivet.tmLanguage.json"
+    }]
+  }
+}

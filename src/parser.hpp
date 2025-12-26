@@ -3,6 +3,9 @@
 #include "diag.hpp"
 #include "lexer.hpp"
 #include "token.hpp"
+#include <optional>
+#include <string>
+#include <vector>
 
 class Parser {
 public:
@@ -21,17 +24,28 @@ private:
 
     std::string parse_ident_text(const char* msg);
     std::string parse_brace_blob();
+    std::string parse_string_literal(const char* msg); 
 
     ModeName parse_mode_name(const char* msg);
+
+    std::vector<std::string> parse_call_args();
+    std::vector<Param> parse_decl_params();
+    TypeInfo parse_type();
+    TypeInfo parse_optional_return_type();
 
     SystemModeDecl parse_systemmode_decl();
     NodeDecl parse_node_decl();
     ModeDecl parse_mode_decl();
+    FuncDecl parse_func_decl();
+    
+    // NEW
+    TopicDecl parse_topic_decl();
+    
+    OnRequestDecl parse_on_request_decl();
+    OnListenDecl parse_on_listen_decl();
 
-    Stmt parse_stmt();
+    std::optional<Stmt> parse_stmt();
     std::vector<Stmt> parse_indented_block_stmts();
 
     void skip_indented_block_recovery();
-
-    bool is_reserved_mode_name(const std::string& s) const; // (if you still have this elsewhere)
 };

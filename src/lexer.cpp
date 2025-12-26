@@ -8,6 +8,19 @@ static TokenKind keyword_kind(std::string_view s) {
         {"mode",       TokenKind::KwMode},
         {"do",         TokenKind::KwDo},
         {"systemMode", TokenKind::KwSystemMode},
+        {"request",    TokenKind::KwRequest},
+        {"onRequest",  TokenKind::KwOnRequest},
+        {"silent",     TokenKind::KwSilent},
+        {"return",     TokenKind::KwReturn},
+        {"func",       TokenKind::KwFunc},
+        {"publish",    TokenKind::KwPublish},
+        {"onListen",   TokenKind::KwOnListen},
+        {"topic",      TokenKind::KwTopic},
+        
+        {"int",        TokenKind::KwTypeInt},
+        {"float",      TokenKind::KwTypeFloat},
+        {"string",     TokenKind::KwTypeString},
+        {"bool",       TokenKind::KwTypeBool},
     };
     auto it = kw.find(s);
     return it == kw.end() ? TokenKind::Ident : it->second;
@@ -38,7 +51,16 @@ void Lexer::emit_newline() {
 void Lexer::handle_indent() {
     int s = i_;
     int spaces = 0;
-    while (cur() == ' ') { spaces++; i_++; }
+    while (cur() == ' ' || cur() == '\t') { 
+        if (cur() == '\t') spaces += 4; 
+        else spaces++;
+        i_++; 
+    }
+
+    if (cur() == '\n' || cur() == '\r') {
+        at_line_start_ = false; 
+        return; 
+    }
 
     int prev = indent_.back();
     if (spaces > prev) {
@@ -62,7 +84,7 @@ void Lexer::skip_line_comment() {
 }
 
 void Lexer::skip_block_comment() {
-    i_ += 2; // consume /*
+    i_ += 2; 
     while (!eof()) {
         if (cur() == '*' && peek(1) == '/') {
             i_ += 2;
@@ -88,6 +110,13 @@ Token Lexer::ident() {
 Token Lexer::number() {
     int s = i_;
     while (std::isdigit((unsigned char)cur())) i_++;
+    
+    if (cur() == '.' && std::isdigit((unsigned char)peek(1))) {
+        i_++; 
+        while (std::isdigit((unsigned char)cur())) i_++;
+        return make(TokenKind::Float, s, i_);
+    }
+    
     return make(TokenKind::Int, s, i_);
 }
 
@@ -131,7 +160,6 @@ Token Lexer::next() {
 
     skip_ws();
 
-    // Comments
     if (cur() == '/' && peek(1) == '/') {
         skip_line_comment();
         return next();
@@ -146,12 +174,14 @@ Token Lexer::next() {
     if (cur() == '"') return string();
 
     int s = i_;
+    if (cur() == '.') { i_++; return make(TokenKind::Dot, s, i_); }
     if (cur() == ':') { i_++; return make(TokenKind::Colon, s, i_); }
     if (cur() == ',') { i_++; return make(TokenKind::Comma, s, i_); }
     if (cur() == '(') { i_++; return make(TokenKind::LParen, s, i_); }
     if (cur() == ')') { i_++; return make(TokenKind::RParen, s, i_); }
     if (cur() == '{') { i_++; return make(TokenKind::LBrace, s, i_); }
     if (cur() == '}') { i_++; return make(TokenKind::RBrace, s, i_); }
+    if (cur() == '=' && peek(1) != '=') { i_++; return make(TokenKind::Assign, s, i_); }
     if (cur() == '-' && peek(1) == '>') { i_ += 2; return make(TokenKind::Arrow, s, i_); }
 
     diag_.error(src_.loc_from_offset(i_), "Unexpected character");

@@ -4,11 +4,13 @@
 #include "print_ast.hpp"
 #include "source.hpp"
 #include "validate.hpp"
+#include "graphviz.hpp" // <--- Include this
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <cstring> // for strcmp
 
 static std::string read_file(const std::string& path) {
     std::ifstream file(path, std::ios::in | std::ios::binary);
@@ -19,26 +21,39 @@ static std::string read_file(const std::string& path) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::cerr << "Usage: rivet <file.rv>\n";
+    if (argc < 2) {
+        std::cerr << "Usage: rivet <file.rv> [--graph]\n";
         return 1;
     }
 
+    std::string filename = argv[1];
+    bool graph_mode = false;
+
+    // Simple arg parsing
+    if (argc >= 3 && std::strcmp(argv[2], "--graph") == 0) {
+        graph_mode = true;
+    }
+
     try {
-        Source src(argv[1], read_file(argv[1]));
+        Source src(filename, read_file(filename));
         DiagnosticEngine diag(src);
         Lexer lex(src, diag);
         Parser parser(lex, diag);
 
         Program p = parser.parse_program();
-
-        // NEW: semantic checks (unknown nodes, etc.)
         bool ok = validate_program(p, diag);
 
-        print_ast(p, std::cout);
-        return ok ? 0 : 2;
+        if (!ok) return 2;
+
+        if (graph_mode) {
+            generate_dot(p, std::cout);
+        } else {
+            print_ast(p, std::cout);
+        }
+
+        return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "Fatal error: " << e.what() << "\n";
         return 1;
     }
 }

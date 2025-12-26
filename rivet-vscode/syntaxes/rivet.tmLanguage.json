@@ -1,0 +1,119 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Rivet",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#support"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.rivet",
+          "match": "\\b(if|else|return|do)\\b"
+        },
+        {
+          "name": "keyword.other.rivet",
+          "match": "\\b(node|mode|systemMode|topic)\\b"
+        },
+        {
+          "name": "keyword.declaration.rivet",
+          "match": "\\b(func|onRequest|onListen)\\b"
+        },
+        {
+          "name": "keyword.operator.rivet",
+          "match": "\\b(request|publish|silent)\\b"
+        },
+        {
+          "name": "storage.type.rivet",
+          "match": "\\b(int|float|string|bool)\\b"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.rivet",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.rivet",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.rivet",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.rivet",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.rivet",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.rivet",
+          "match": "\\b\\d+\\b"
+        },
+        {
+          "name": "constant.language.boolean.rivet",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.rivet",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.assignment.rivet",
+          "match": "="
+        },
+        {
+          "name": "punctuation.separator.rivet",
+          "match": "[:.,]"
+        }
+      ]
+    },
+    "support": {
+      "patterns": [
+        {
+          "name": "entity.name.function.rivet",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\()"
+        },
+        {
+          "name": "entity.name.type.class.rivet",
+          "match": "(?<=:)\\s*\\b[A-Z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  },
+  "scopeName": "source.rivet"
+}

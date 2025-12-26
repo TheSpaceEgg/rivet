@@ -1,93 +1,74 @@
-// =============================================================
-// Rivet demo file: exercises everything implemented so far
-// - node declarations with config blobs
-// - mode declarations (reserved identifier modes)
-// - mode delegation: `do normal`
-// - quoted node-local mode names: imu->"calibrate"
-// - indented mode bodies with function-call statements + args
-// - line comments (//) and block comments (/* ... */)
-// =============================================================
+systemMode emergency_stop
 
-systemMode survey
+node lidar : SensorLidar
+  topic scan = "perception/scan_data" : float
+  topic alarm = "perception/obstacle" : bool
 
-/*
-  Nodes: keep them top-level.
-  Config blocks are still treated as raw blobs by the parser.
-*/
-node imu : I2C{bus:3, addr:0x49}
-node motor : PWM{pin:12, freq:20000}
-node comms : CAN{iface:can0, bitrate:500000}
+  func internalFilter(raw: float) -> float
+    return raw
 
-// -------------------------------------------------------------
-// Reserved mode: boot
-// Body contains only function-call statements at the moment.
-// -------------------------------------------------------------
-mode imu->boot
-  initIMU()
-  setRanges(2000, 16)     // ints
-  setFilter("lowpass")    // string literal
+  onRequest startScan(rate: int) -> bool
+    scan.publish(10.5)
+    return true
 
-mode motor->boot
-  initMotor()
-  setLimits(0, 255)
+  onRequest checkPath() -> bool
+    alarm.publish(true)
+    return false
 
-mode comms->boot
-  initCAN()
+node planner : NavStack
+  topic cmd_vel = "navigation/velocity" : float
+  topic status = "navigation/status" : string
 
-// -------------------------------------------------------------
-// Reserved mode: normal
-// -------------------------------------------------------------
-mode imu->normal
-  readRaw()
-  computeOrientation()
-  publishIMU("imu/data")  // string arg
+  onListen lidar.scan handleScan(dist: float)
+    calculatePath(dist)
 
-mode motor->normal
-  holdSpeed(120)
+  onListen lidar.alarm handleObstacle(danger: bool)
+    status.publish("BLOCKED")
+    request silent motors.halt()
 
-mode comms->normal
-  tickComms()
+  func calculatePath(d: float) -> bool
+    cmd_vel.publish(0.8)
+    return true
 
-// -------------------------------------------------------------
-// Node-local mode name using a quoted string
-// (This is NOT system-wide; only this node has it.)
-// -------------------------------------------------------------
-mode imu->"calibrate"
-  startCal()
-  sample(1000)
-  finishCal()
+  onRequest getPlan() -> string
+    return "Waypoints..."
 
-// -------------------------------------------------------------
-// Reserved mode: idle
-// -------------------------------------------------------------
-mode imu->idle do calibrate
+node motors : DriveController
+  topic odometry = "drive/odom" : float
+  topic state = "drive/status" : int
 
+  onListen planner.cmd_vel setVelocity(v: float)
+    runPID(v)
 
-mode motor->idle
-  stopMotor()
+  func runPID(target: float) -> int
+    odometry.publish(target)
+    return 1
 
-mode comms->idle
-  lowPower()
+  onRequest halt() -> bool
+    return true
 
-// -------------------------------------------------------------
-// Reserved mode: fault
-// Delegation form (no indented body)
-// -------------------------------------------------------------
-mode imu->fault do normal
-mode motor->fault do normal
-mode comms->fault do normal
+  func reportStatus(s: int) -> bool
+    state.publish(s)
+    return true
 
-// -------------------------------------------------------------
-// Reserved mode: shutdown
-// Includes a block comment inside the mode.
-// -------------------------------------------------------------
-mode imu->shutdown
-  /* tidy up */
-  powerDown()
+node dashboard : UI
+  onListen planner.status showStatus(msg: string)
+    log(msg)
 
-mode motor->shutdown
-  stopMotor()
-  powerOff()
+  onListen motors.odometry updateMap(pos: float)
+    render(pos)
 
-mode comms->shutdown
-  closeCAN()
+  func log(m: string) -> int
+    return 1
+
+  func render(p: float) -> bool
+    return true
+
+mode planner->normal
+  request lidar.startScan(20)
+
+mode motors->normal
+  reportStatus(1)
+
+mode planner->emergency_stop
+  request motors.halt()

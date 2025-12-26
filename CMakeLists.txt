@@ -12,6 +12,7 @@ add_executable(rivet
   src/parser.cpp
   src/print_ast.cpp
   src/validate.cpp
+  src/graphviz.cpp
 )
 
 if (MINGW)

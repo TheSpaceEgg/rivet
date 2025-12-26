@@ -4,41 +4,25 @@
 
 enum class TokenKind {
     // Special
-    Eof,
-    Invalid,
+    Eof, Invalid,
 
     // Layout
-    Newline,
-    Indent,
-    Dedent,
+    Newline, Indent, Dedent,
 
     // Identifiers / literals
-    Ident,
-    Int,
-    Float,
-    String,
+    Ident, Int, Float, String,
 
-    // Keywords (add as needed)
-    KwNode,
-    KwMessage,
-    KwVar,
-    KwFunc,
-    KwMode,
-    KwOnRequest,
-    KwReturn,
-    KwDo,
-    KwSystemMode,
+    // Keywords
+    KwNode, KwMode, KwDo, KwSystemMode,
+    KwRequest, KwOnRequest, KwSilent, KwReturn,
+    KwFunc, KwPublish, KwOnListen, KwTopic,
+    
+    // Types
+    KwTypeInt, KwTypeFloat, KwTypeString, KwTypeBool,
 
-    // Punctuation / operators
-    Colon,      // :
-    Comma,      // ,
-    Dot,        // .
-    Arrow,      // ->
-    Assign,     // =
-    LParen,     // (
-    RParen,     // )
-    LBrace,     // {
-    RBrace,     // }
+    // Punctuation
+    Colon, Comma, Dot, Arrow, Assign,
+    LParen, RParen, LBrace, RBrace,
 };
 
 struct Token {
