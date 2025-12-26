@@ -1,136 +1,124 @@
 # Rivet Language Reference
 
-Rivet is a domain-specific language (DSL) for defining robust, state-machine-driven robotics architectures. It enforces strict separation of concerns, type safety, and authority hierarchies.
+Rivet is a domain-specific language (DSL) for designing **Reactive State Machines** for robotics and autonomous systems. It compiles high-level coordination logic into asynchronous, thread-safe C++.
 
-## 1. System Definition
-Define the high-level lifecycle states of the robot. `Init`, `Normal`, and `Shutdown` are reserved and implicitly exist.
+## 1. System Structure
+A Rivet program is composed of **System Modes**, **Nodes**, and **Modes**.
 
+### System Modes
+System modes define the global states of the entire application.
 ```rivet
-systemMode Launch
-systemMode Emergency
+systemMode Startup
+systemMode Active
+systemMode Shutdown
 ```
+
+---
 
 ## 2. Nodes
-Nodes are the primary components (sensors, actuators, logic).
-
-**Standard Node**
-```rivet
-node Sensor : Lidar
-  // ...
-```
-
-**Controller Node**
-Only controllers can trigger `transition system`.
-```rivet
-node controller Brain : MainCPU
-```
-
-**Isolated Node**
-Ignores system mode changes (e.g., recorders).
-```rivet
-node BlackBox : Recorder ignore system
-```
-
-## 3. Data & Communication
-**Topics** (Typed data streams)
-```rivet
-topic altitude = "env/alt" : float
-topic status   = "sys/stat" : string
-```
-
-**Functions**
-* `onRequest`: Public API (callable by others).
-* `func`: Private helper (internal only).
+Nodes represent isolated processes, hardware drivers, or software modules.
 
 ```rivet
-onRequest calibrate() -> bool
-  return true
-
-func internalCheck(val: int) -> bool
-  return true
-```
-
-**Actions**
-```rivet
-altitude.publish(10.5)
-request OtherNode.calibrate()
-request silent OtherNode.save() // Ignore return value
-```
-
-## 4. Event Handling (Listeners)
-Nodes react to topics published by others.
-
-**Global Listener** (Active in all modes)
-```rivet
-// Inline
-onListen Brain.status handleState(s: string)
-  internalCheck(1)
-
-// Delegated (Routes to function)
-onListen Brain.abort do stopProcess()
-```
-
-**Scoped Listener** (Active only in specific mode)
-```rivet
-mode Sensor->Calibrating
-  onListen Brain.abort do stopProcess()
-```
-
-## 5. State Management (Modes)
-Logic is grouped into Modes.
-
-**Explicit Modes**
-Define behavior for a specific node in a specific state.
-```rivet
-// Standard Mode
-mode Sensor->Calibrating
-  transition "Idle"
-
-// System-Bound Mode (Runs when system is in 'Emergency')
-mode Thrusters->Emergency
-  request Thrusters.stop()
-```
-
-**Isolation**
-A specific mode can ignore system state changes.
-```rivet
-mode Thrusters->Firing ignore system
-```
-
-## 6. Transitions
-**Local Transition**: Switches the *current node* to a new local state.
-```rivet
-transition "Idle"
-```
-
-**System Transition**: Switches the *entire robot* to a new system mode. (Controllers only).
-```rivet
-transition system "Emergency"
-```
-
-## 7. Example Script
-```rivet
-systemMode Mission
-
-node controller Brain : CPU
+node controller FlightCore : Autopilot
+  topic altitude = "nav/alt" : float   // Published data stream
   topic state = "sys/state" : string
-
-  onRequest start() -> bool
-    transition system "Mission"
+  
+  // Handlers for remote requests (RPC)
+  onRequest arm() -> bool
+    log info "Arming System"
+    transition system "Active"
     return true
-
-node Sensor : Lidar
-  topic data = "env/data" : float
-
-  // 1. Reserved Init Mode
-  mode Sensor->Init
-    data.publish(0.0)
-
-  // 2. System-Specific Behavior
-  mode Sensor->Mission
-    onListen Brain.state do processState()
-
-  func processState(s: string) -> bool
-    data.publish(1.0)
+    
+  // Internal private functions
+  func internalCalibrate() -> bool
     return true
 ```
+
+### Node Keywords
+* `controller`: Marks a node authorized to trigger global `system` transitions.
+* `ignore system`: Prevents a node from automatically reacting to global system state changes.
+* `topic`: Defines an output data stream (`int`, `float`, `string`, `bool`).
+* `onRequest`: A public method reachable by other nodes via `request`.
+* `func`: A private method for internal node logic.
+
+---
+
+## 3. Communication Architecture
+Rivet utilizes a hybrid **Publish-Subscribe** and **Request-Response** model.
+
+### Topics (Pub/Sub)
+Nodes subscribe to data from other nodes using `onListen`.
+```rivet
+node Perception : Lidar
+  // Automatically triggers adjust() when FlightCore publishes to 'altitude'
+  onListen FlightCore.altitude do adjust()
+```
+
+### Requests (RPC)
+Nodes can explicitly trigger actions on other nodes.
+```rivet
+mode FlightCore->Init
+  request Perception.scan()         // Standard request
+  request silent Motors.calibrate() // Request without automatic logging
+```
+
+---
+
+## 4. State Management (Modes)
+Modes define logic blocks that execute at specific state intersections.
+
+### Init Mode
+The entry point for a node; runs exactly once upon instantiation.
+```rivet
+mode FlightCore->Init
+  altitude.publish(0.0)
+  log "FlightCore initialized"
+```
+
+### System Reaction Modes
+Logic that triggers automatically when the global `SystemManager` transitions.
+```rivet
+mode Motors->Shutdown
+  request Motors.instantStop()
+  log warn "Motors reacting to global Shutdown"
+```
+
+### Internal Scoped Modes
+Logic that is active only when the node itself is in a specific internal state.
+```rivet
+mode Camera->Scanning
+  onListen Sensors.trigger do snap()
+```
+
+---
+
+## 5. Built-in Commands
+
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `log` | Formatted console output with node context | `log warn "Low Voltage"` |
+| `print` | Raw standard output | `print "Val: ", x` |
+| `transition` | Changes node or global system state | `transition system "Active"` |
+| `publish` | Broadens data to a topic | `state.publish("READY")` |
+| `return` | Exits a function with a return value | `return true` |
+
+### Log Levels
+Supported levels: `info`, `warn`, `error`, `debug`.
+
+---
+
+## 6. Type System
+Rivet is statically typed for safety:
+* `int`: 32-bit integers (`42`, `-7`)
+* `float`: 64-bit floating point (`3.14159`)
+* `string`: UTF-8 text strings (`"Hello World"`)
+* `bool`: Logic values (`true`, `false`)
+
+---
+
+## 7. Toolchain Workflow
+
+1. **Authoring**: Write your logic in a `.rv` file.
+2. **Compilation**: `rivet.exe <script>.rv --cpp` 
+3. **C++ Build**: `g++ <script>.rv.cpp -o <app_name> -std=c++17 -pthread`
+4. **Deployment**: Run the generated binary on your target hardware.

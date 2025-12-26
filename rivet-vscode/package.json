@@ -1,10 +1,17 @@
 {
   "name": "rivet-lang",
-  "displayName": "Rivet Language Support",
-  "description": "Syntax highlighting for Rivet (.rv)",
-  "version": "0.0.1",
+  "displayName": "Rivet",
+  "description": "Rivet Language Support",
+  "version": "0.0.9",
+  "publisher": "rivet-dev",
   "engines": { "vscode": "^1.70.0" },
   "categories": [ "Programming Languages" ],
+  
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:rivet"
+  ],
+
   "contributes": {
     "languages": [{
       "id": "rivet",
@@ -20,12 +27,6 @@
     "snippets": [{
       "language": "rivet",
       "path": "./rivet.code-snippets"
-    }],
-    "configurationDefaults": {
-      "[rivet]": {
-        "editor.bracketPairColorization.enabled": true,
-        "editor.guides.bracketPairs": true
-      }
-    }
+    }]
   }
 }

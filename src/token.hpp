@@ -16,10 +16,11 @@ enum class TokenKind {
     KwNode, KwMode, KwDo, KwSystemMode,
     KwRequest, KwOnRequest, KwSilent, KwReturn,
     KwFunc, KwPublish, KwOnListen, KwTopic,
+    KwTransition, KwSystem, KwController, KwIgnore,
     
-    // NEW KEYWORDS
-    KwTransition, KwSystem, 
-    KwController, KwIgnore,
+    // NEW: Log & Print
+    KwLog, KwPrint,
+    KwError, KwWarn, KwInfo, KwDebug,
 
     // Types
     KwTypeInt, KwTypeFloat, KwTypeString, KwTypeBool,

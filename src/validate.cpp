@@ -17,7 +17,7 @@ struct NodeSymbol {
     bool is_controller = false; 
     std::unordered_map<std::string, TopicSymbol> topics;     
     std::unordered_map<std::string, FuncSymbol> public_funcs; 
-    std::unordered_map<std::string, FuncSymbol> private_funcs; // NEW
+    std::unordered_map<std::string, FuncSymbol> private_funcs; 
 };
 
 static std::unordered_map<std::string, NodeSymbol> g_nodes;
@@ -102,6 +102,30 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
                               const std::vector<Param>& current_params) {
         for (const auto& stmt : stmts) {
             
+            // Validate Log Arguments (Variables)
+            if (auto log = std::get_if<LogStmt>(&stmt)) {
+                for (const auto& arg : log->args) {
+                    // Skip literals
+                    if (arg.size() >= 2 && arg.front() == '"') continue;
+                    if (isdigit(arg[0]) || arg[0] == '-') continue;
+                    if (arg == "true" || arg == "false") continue;
+
+                    // Must be a parameter or topic (if inside node)
+                    bool found = false;
+                    for (const auto& p : current_params) {
+                        if (p.name == arg) { found = true; break; }
+                    }
+                    if (!found && g_nodes.find(current_node) != g_nodes.end()) {
+                         if (g_nodes[current_node].topics.count(arg)) found = true;
+                    }
+
+                    if (!found) {
+                        diag.error(log->loc, "Unknown variable '" + arg + "' in log statement");
+                        has_error = true;
+                    }
+                }
+            }
+
             if (auto pub = std::get_if<PublishStmt>(&stmt)) {
                 if (g_nodes.find(current_node) == g_nodes.end()) continue;
                 
@@ -177,7 +201,6 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
     };
 
     auto validate_listener = [&](const OnListenDecl& lis, const std::string& current_node) {
-         // 1. Check Topic Source
          std::string src = lis.source_node.empty() ? current_node : lis.source_node;
          if (g_nodes.find(src) == g_nodes.end()) {
              diag.error(lis.loc, "Unknown node '" + src + "' in listener");
@@ -192,7 +215,6 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
          }
          TypeInfo topicType = src_node.topics[lis.topic_name].type;
 
-         // 2. Check Delegation or Inline
          if (!lis.delegate_to.empty()) {
              auto& my_node = g_nodes[current_node];
              if (my_node.private_funcs.find(lis.delegate_to) == my_node.private_funcs.end()) {

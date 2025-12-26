@@ -5,6 +5,7 @@
 #include "source.hpp"
 #include "validate.hpp"
 #include "graphviz.hpp"
+#include "codegen_cpp.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -22,17 +23,20 @@ static std::string read_file(const std::string& path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: rivet <file.rv> [--graph | --show]\n";
+        std::cerr << "Usage: rivet <file.rv> [--graph | --show | --cpp]\n";
         return 1;
     }
 
     std::string filename = argv[1];
+    
     bool raw_dot_mode = false;
     bool auto_show_mode = false;
+    bool cpp_mode = false;
 
-    if (argc >= 3) {
-        if (std::strcmp(argv[2], "--graph") == 0) raw_dot_mode = true;
-        if (std::strcmp(argv[2], "--show") == 0) auto_show_mode = true;
+    for (int i = 2; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--graph") == 0) raw_dot_mode = true;
+        else if (std::strcmp(argv[i], "--show") == 0) auto_show_mode = true;
+        else if (std::strcmp(argv[i], "--cpp") == 0) cpp_mode = true;
     }
 
     try {
@@ -42,20 +46,33 @@ int main(int argc, char** argv) {
         Parser parser(lex, diag);
 
         Program p = parser.parse_program();
-        bool ok = validate_program(p, diag);
 
-        if (!ok) return 2;
+        // 1. Check for Parse Errors
+        // We don't call diag.print() because report() prints immediately
+        if (diag.has_errors()) {
+            return 1;
+        }
 
-        if (raw_dot_mode) {
-            // Output raw DOT text to stdout (for piping)
+        // 2. Validate Logic
+        if (!validate_program(p, diag)) {
+            return 2;
+        }
+
+        // 3. Output
+        if (cpp_mode) {
+            std::string out_name = filename + ".cpp";
+            std::ofstream out(out_name);
+            generate_cpp(p, out);
+            std::cout << "Generated C++: " << out_name << "\n";
+            std::cout << "Compile with: g++ " << out_name << " -o app -std=c++17\n";
+        }
+        else if (raw_dot_mode) {
             generate_dot(p, std::cout);
         } 
         else if (auto_show_mode) {
-            // Generate HTML and pop it open
             generate_and_open_html(p, "rivet_graph.html");
         } 
         else {
-            // Default: AST
             print_ast(p, std::cout);
         }
 

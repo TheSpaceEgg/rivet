@@ -110,6 +110,26 @@ std::vector<std::string> Parser::parse_call_args() {
     return args;
 }
 
+// Helper to parse print args without parentheses (space/comma separated)
+std::vector<std::string> Parser::parse_print_args() {
+    std::vector<std::string> args;
+    while (cur_.kind == TokenKind::String || cur_.kind == TokenKind::Ident || 
+           cur_.kind == TokenKind::Int || cur_.kind == TokenKind::Float || 
+           cur_.kind == TokenKind::KwTypeBool) {
+        
+        // Handle String specially to keep quotes for AST printer/codegen (or strip them? let's keep them logic consistent)
+        // Actually for log arguments we probably want to pass the raw token text so the validator can resolve it later.
+        if (cur_.kind == TokenKind::String) {
+             args.push_back("\"" + strip_quotes(cur_.lexeme) + "\"");
+        } else {
+             args.push_back(std::string(cur_.lexeme));
+        }
+        advance();
+        if (!match(TokenKind::Comma)) break; 
+    }
+    return args;
+}
+
 TypeInfo Parser::parse_type() {
     TypeInfo t;
     if (match(TokenKind::KwTypeInt))    { t.base = ValType::Int; return t; }
@@ -208,9 +228,6 @@ FuncDecl Parser::parse_func_decl() {
     return f;
 }
 
-// ---------------------------------------------------------
-// UPDATED: onRequest Parser (With Brackets)
-// ---------------------------------------------------------
 OnRequestDecl Parser::parse_on_request_decl() {
     Token start = cur_;
     expect(TokenKind::KwOnRequest, "Expected 'onRequest'");
@@ -220,11 +237,8 @@ OnRequestDecl Parser::parse_on_request_decl() {
     if (match(TokenKind::KwDo)) {
         decl.delegate_to = parse_ident_text("Expected function name to delegate to");
         decl.sig.name = decl.delegate_to; 
-        
-        // NEW: Require brackets
         expect(TokenKind::LParen, "Expected '()' after delegated function name");
         expect(TokenKind::RParen, "Expected ')' after delegated function name");
-
         skip_newlines();
         return decl;
     }
@@ -237,9 +251,6 @@ OnRequestDecl Parser::parse_on_request_decl() {
     return decl;
 }
 
-// ---------------------------------------------------------
-// UPDATED: onListen Parser (With Brackets)
-// ---------------------------------------------------------
 OnListenDecl Parser::parse_on_listen_decl() {
     Token start = cur_;
     expect(TokenKind::KwOnListen, "Expected 'onListen'");
@@ -256,11 +267,8 @@ OnListenDecl Parser::parse_on_listen_decl() {
 
     if (match(TokenKind::KwDo)) {
         decl.delegate_to = parse_ident_text("Expected function name to delegate to");
-        
-        // NEW: Require brackets
         expect(TokenKind::LParen, "Expected '()' after delegated function name");
         expect(TokenKind::RParen, "Expected ')' after delegated function name");
-        
         skip_newlines();
         return decl;
     }
@@ -272,7 +280,6 @@ OnListenDecl Parser::parse_on_listen_decl() {
     return decl;
 }
 
-// ... (Rest of the file is identical to previous version)
 NodeDecl Parser::parse_node_decl() {
     Token startTok = cur_;
     expect(TokenKind::KwNode, "Expected 'node'");
@@ -322,6 +329,31 @@ NodeDecl Parser::parse_node_decl() {
 }
 
 std::optional<Stmt> Parser::parse_stmt() {
+    // NEW: Log & Print Support
+    if (cur_.kind == TokenKind::KwPrint) {
+        LogStmt log;
+        log.loc = cur_.loc;
+        log.level = LogLevel::Print;
+        advance();
+        log.args = parse_print_args();
+        return log;
+    }
+    if (cur_.kind == TokenKind::KwLog) {
+        LogStmt log;
+        log.loc = cur_.loc;
+        advance();
+        
+        // Optional level
+        if (match(TokenKind::KwError))      log.level = LogLevel::Error;
+        else if (match(TokenKind::KwWarn))  log.level = LogLevel::Warn;
+        else if (match(TokenKind::KwInfo))  log.level = LogLevel::Info;
+        else if (match(TokenKind::KwDebug)) log.level = LogLevel::Debug;
+        else log.level = LogLevel::Info; // Default
+
+        log.args = parse_print_args();
+        return log;
+    }
+
     if (cur_.kind == TokenKind::KwRequest) {
         RequestStmt req;
         req.loc = cur_.loc;
@@ -420,20 +452,15 @@ ModeDecl Parser::parse_mode_decl() {
 
     skip_newlines();
 
-    // Parse indented block
     if (match(TokenKind::Indent)) {
         while (cur_.kind != TokenKind::Eof && cur_.kind != TokenKind::Dedent) {
-            
-            // NEW: Check for onListen inside Mode
             if (cur_.kind == TokenKind::KwOnListen) {
                 m.listeners.push_back(parse_on_listen_decl());
             } 
-            // Normal Statements
             else if (auto s = parse_stmt()) {
                 m.body.push_back(*s);
                 while (match(TokenKind::Newline)) {}
             }
-            // Empty lines
             else if (match(TokenKind::Newline)) {
                 continue;
             } 

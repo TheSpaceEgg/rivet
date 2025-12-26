@@ -13,6 +13,7 @@ add_executable(rivet
   src/print_ast.cpp
   src/validate.cpp
   src/graphviz.cpp
+  src/codegen_cpp.cpp
 )
 
 if (MINGW)

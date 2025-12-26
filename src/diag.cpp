@@ -30,6 +30,10 @@ bool DiagnosticEngine::report(DiagLevel level,
                               SourceLoc loc,
                               const std::string& message) const
 {
+    if (level == DiagLevel::Error) {
+        had_error_ = true;
+    }
+
     // Header: file:line:col <coloured level>: message
     std::cerr
         << src_.filename() << ":"
@@ -42,16 +46,20 @@ bool DiagnosticEngine::report(DiagLevel level,
         << message
         << "\n";
 
-    // Source line
-    auto line = src_.line_text(loc.line);
-    std::cerr << line << "\n";
+    // Source line extraction using the line number from loc
+    // We use your existing src_.line_text(loc.line) method
+    auto line_content = src_.line_text(loc.line);
+    std::cerr << "  " << line_content << "\n";
 
     // Caret line: spaces up to (col-1), then ^
     int caret_pos = loc.col;
     if (caret_pos < 1) caret_pos = 1;
 
-    for (int i = 1; i < caret_pos; ++i) std::cerr << ' ';
-    std::cerr << "^\n";
+    std::cerr << "  "; 
+    for (int i = 1; i < caret_pos; ++i) {
+        std::cerr << ' ';
+    }
+    std::cerr << level_colour(level) << "^" << RESET << "\n";
 
     return false;
 }

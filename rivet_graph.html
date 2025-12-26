@@ -21,59 +21,59 @@
   edge [fontname="Arial", fontsize=10];
   graph [style=filled, fillcolor="#eeeeee"];
 
-  subgraph cluster_OBC {
-    label = "OBC : MainComputer";
+  subgraph cluster_FlightCore {
+    label = "FlightCore : Autopilot";
     style = rounded;
     color = black;
     bgcolor = white;
-    OBC [label="OBC", shape=component, fillcolor="#d0e0ff"];
-    OBC__state [label="sys/state\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    OBC__altitude [label="sys/alt\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    OBC__abort [label="sys/abort\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    FlightCore [label="FlightCore", shape=component, fillcolor="#d0e0ff"];
+    FlightCore__state [label="sys/state\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    FlightCore__altitude [label="nav/alt\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    FlightCore__battery [label="pwr/volts\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
 
-  subgraph cluster_Gyroscope {
-    label = "Gyroscope : IMU";
+  subgraph cluster_Perception {
+    label = "Perception : LidarScanner";
     style = rounded;
     color = black;
     bgcolor = white;
-    Gyroscope [label="Gyroscope", shape=component, fillcolor="#d0e0ff"];
-    Gyroscope__raw_z [label="sense/z\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    Perception [label="Perception", shape=component, fillcolor="#d0e0ff"];
+    Perception__distance [label="sense/dist\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    Perception__object_detected [label="sense/obj\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
 
-  subgraph cluster_Thrusters {
-    label = "Thrusters : Propulsion";
+  subgraph cluster_Motors {
+    label = "Motors : ESCController";
     style = rounded;
     color = black;
     bgcolor = white;
-    Thrusters [label="Thrusters", shape=component, fillcolor="#d0e0ff"];
-    Thrusters__fuel [label="prop/fuel\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    Thrusters__active [label="prop/active\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    Motors [label="Motors", shape=component, fillcolor="#d0e0ff"];
+    Motors__rpm [label="act/speed\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    Motors__temp [label="act/temp\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
 
-  subgraph cluster_Radio {
-    label = "Radio : CommLink";
+  subgraph cluster_BlackBox {
+    label = "BlackBox : SDCard";
     style = rounded;
     color = black;
     bgcolor = white;
-    Radio [label="Radio", shape=component, fillcolor="#d0e0ff"];
-    Radio__uplink [label="comm/rx\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    BlackBox [label="BlackBox", shape=component, fillcolor="#d0e0ff"];
+    BlackBox__storage_used [label="sys/disk\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
-    OBC -> OBC__state [color=blue];
-    OBC -> OBC__state [color=blue];
-    OBC -> OBC__abort [color=blue];
-  OBC__altitude -> Gyroscope [color=green];
-    Gyroscope -> Gyroscope__raw_z [color=blue];
-  OBC__abort -> Thrusters [color=green];
-    Thrusters -> Thrusters__active [color=blue];
-    Thrusters -> Thrusters__active [color=blue];
-    Thrusters -> Thrusters__fuel [color=blue];
-    Radio -> Radio__uplink [color=blue];
-    OBC -> OBC__state [color=blue];
-    OBC -> OBC__altitude [color=blue];
-    Gyroscope -> Radio [style=dashed, label="sendTelemetry"];
-    Thrusters -> OBC [style=dashed, label="stabilize"];
-    OBC -> Thrusters [style=dashed, label="fire"];
+    FlightCore -> FlightCore__altitude [color=blue];
+  FlightCore__altitude -> Perception [color=green];
+    Perception -> Perception__distance [color=blue];
+    Motors -> Motors__rpm [color=blue];
+    Motors -> Motors__rpm [color=blue];
+    Motors -> Motors__rpm [color=blue];
+  FlightCore__state -> BlackBox [color=green];
+    FlightCore -> FlightCore__battery [color=blue];
+    FlightCore -> FlightCore__state [color=blue];
+    Motors -> BlackBox [style=dashed, label="flush"];
+    Motors -> Motors [style=dashed, label="spin"];
+    Motors -> Motors [style=dashed, label="spin"];
+    Motors -> Motors [style=dashed, label="spin"];
+    FlightCore -> Perception [style=dashed, label="scan"];
 }
 `;
         var viz = new Viz();

@@ -1,101 +1,58 @@
-systemMode Launch
-systemMode Orbit
-systemMode Deorbit
+systemMode Startup
+systemMode Active
 
-/* Complex Integration Test: Orbital Satellite Architecture
-   Features: Scoped Listeners, Delegation, Isolation, Controllers
+/* Active Mission Test: Automated Startup Sequence
+   This script is designed to trigger a chain reaction across all nodes.
 */
 
-node controller OBC : MainComputer
-  topic state = "sys/state" : string
-  topic altitude = "sys/alt" : float
-  topic abort = "sys/abort" : bool
+node controller CommandCenter : GroundControl
+  topic heartbeat = "sys/hb" : int
+  topic system_ready = "sys/ready" : bool
 
-  onRequest initiateLaunch() -> bool
-    state.publish("LAUNCH_SEQUENCE")
-    transition system "Launch"
+  onRequest activate() -> bool
+    log info "Activating System Phase: Startup"
+    transition system "Startup"
     return true
 
-  onRequest stabilize() -> bool
-    state.publish("STABLE")
-    transition system "Orbit"
+  onRequest goLive() -> bool
+    log warn "System GO LIVE"
+    transition system "Active"
     return true
 
-  onRequest triggerDeorbit() -> bool
-    transition system "Deorbit"
+node SensorArray : DataCollector
+  topic reading = "sense/val" : float
+  
+  onListen CommandCenter.system_ready do beginSampling()
+
+  func beginSampling(ready: bool) -> bool
+    log "Sensors online. Starting sampling..."
+    reading.publish(42.0)
     return true
 
-  onRequest emergencyStop() -> bool
-    abort.publish(true)
-    transition system "Shutdown"
+node LoggerNode : DataRecorder ignore system
+  topic disk_status = "disk/stat" : string
+
+  onListen SensorArray.reading do recordData()
+
+  func recordData(val: float) -> bool
+    print "DISK RECORD: ", val
     return true
 
-node Gyroscope : IMU
-  topic raw_z = "sense/z" : float
+// --- Startup Sequence Logic ---
 
-  // Delegation: Routes data directly to private function
-  onListen OBC.altitude do adjustSensitivity()
+mode CommandCenter->Init
+  log "Initializing CommandCenter..."
+  // This kicks off the whole app
+  request CommandCenter.activate()
 
-  func adjustSensitivity(alt: float) -> bool
-    return true
+mode CommandCenter->Startup
+  log "CommandCenter in Startup. Signaling sensors..."
+  system_ready.publish(true)
+  request CommandCenter.goLive()
 
-  onRequest calibrate() -> bool
-    transition "Calibrating"
-    return true
+mode SensorArray->Active
+  log "SensorArray detected Active system state."
+  print "Sampling at high frequency..."
 
-  func internalRead() -> float
-    raw_z.publish(-0.05)
-    return -0.05
-
-node Thrusters : Propulsion ignore system
-  topic fuel = "prop/fuel" : int
-  topic active = "prop/active" : bool
-
-  onListen OBC.abort hardStop(panic: bool)
-    active.publish(false)
-
-  onRequest fire(duration: int) -> bool
-    active.publish(true)
-    consume(duration)
-    return true
-
-  func consume(amount: int) -> int
-    fuel.publish(amount)
-    return 0
-
-node Radio : CommLink
-  topic uplink = "comm/rx" : string
-
-  onRequest sendTelemetry() -> bool
-    uplink.publish("ACK")
-    return true
-
-  func filterNoise(s: string) -> bool
-    return true
-
-  func deepSleep(ignore_val: bool) -> bool
-    return true
-
-mode OBC->Init
-  state.publish("BOOT")
-  altitude.publish(0.0)
-
-mode Gyroscope->Calibrating
-  onListen OBC.state checkPhase(s: string)
-    transition "Idle"
-
-mode Gyroscope->Orbit
-  request Radio.sendTelemetry()
-  internalRead()
-
-mode Thrusters->Active
-  request OBC.stabilize()
-
-mode Radio->Launch
-  onListen OBC.state do filterNoise()
-
-mode Radio->Shutdown
-  onListen OBC.abort do deepSleep()
-
-mode OBC->Deorbit
-  request Thrusters.fire(100)
+mode LoggerNode->Init
+  disk_status.publish("READY")

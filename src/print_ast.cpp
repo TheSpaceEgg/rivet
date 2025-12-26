@@ -4,8 +4,6 @@
 #include <string>
 #include <variant>
 
-// ... (Keep helpers: indent, print_type, print_params, print_stmt, print_stmts)
-
 static void indent(std::ostream& os, int depth) {
     for (int i = 0; i < depth; ++i) os << "  ";
 }
@@ -32,7 +30,26 @@ static void print_params(const std::vector<Param>& params, std::ostream& os) {
 
 static void print_stmt(const Stmt& stmt, std::ostream& os, int depth) {
     indent(os, depth);
-    if (auto call = std::get_if<CallStmt>(&stmt)) {
+    
+    // NEW: Log Statement
+    if (auto log = std::get_if<LogStmt>(&stmt)) {
+        if (log->level == LogLevel::Print) os << "print ";
+        else {
+            os << "log ";
+            switch(log->level) {
+                case LogLevel::Error: os << "error "; break;
+                case LogLevel::Warn:  os << "warn "; break;
+                case LogLevel::Debug: os << "debug "; break;
+                default: break; // Info is default
+            }
+        }
+        for (size_t i = 0; i < log->args.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << log->args[i];
+        }
+        os << "\n";
+    }
+    else if (auto call = std::get_if<CallStmt>(&stmt)) {
         os << call->callee << "(";
         for (size_t i = 0; i < call->args.size(); ++i) {
             if (i > 0) os << ", ";
@@ -67,10 +84,6 @@ static void print_stmts(const std::vector<Stmt>& stmts, std::ostream& os, int de
     for (const auto& s : stmts) print_stmt(s, os, depth);
 }
 
-// ---------------------------------------------------------
-// Component Printers
-// ---------------------------------------------------------
-
 static void print_listener(const OnListenDecl& lis, std::ostream& os, int depth) {
     indent(os, depth);
     os << "onListen ";
@@ -78,7 +91,6 @@ static void print_listener(const OnListenDecl& lis, std::ostream& os, int depth)
     os << lis.topic_name << " ";
 
     if (!lis.delegate_to.empty()) {
-        // NEW: Print with brackets
         os << "do " << lis.delegate_to << "()\n";
     } else {
         os << lis.sig.name;
@@ -92,10 +104,6 @@ static void print_modename(const ModeName& mn, std::ostream& os) {
     if (mn.is_local_string) os << "\"" << mn.text << "\"";
     else os << mn.text;
 }
-
-// ---------------------------------------------------------
-// Main Visitor
-// ---------------------------------------------------------
 
 void print_ast(const Program& p, std::ostream& os) {
     auto visitor = [&](auto&& x) {
@@ -114,7 +122,6 @@ void print_ast(const Program& p, std::ostream& os) {
             if (!x.config_text.empty()) os << " " << x.config_text;
             os << "\n";
 
-            // Topics
             for (const auto& t : x.topics) {
                 indent(os, 1);
                 os << "topic " << t.name << " = \"" << t.path << "\" : ";
@@ -122,12 +129,10 @@ void print_ast(const Program& p, std::ostream& os) {
                 os << "\n";
             }
 
-            // Public Requests
             for (const auto& r : x.requests) {
                 indent(os, 1);
                 os << "onRequest ";
                 if (!r.delegate_to.empty()) {
-                    // NEW: Print with brackets
                     os << "do " << r.delegate_to << "()\n";
                 } else {
                     os << r.sig.name;
@@ -139,12 +144,10 @@ void print_ast(const Program& p, std::ostream& os) {
                 }
             }
 
-            // Global Listeners
             for (const auto& l : x.listeners) {
                 print_listener(l, os, 1);
             }
 
-            // Private Functions
             for (const auto& f : x.private_funcs) {
                 indent(os, 1);
                 os << "func " << f.sig.name;
@@ -161,10 +164,8 @@ void print_ast(const Program& p, std::ostream& os) {
             if (x.ignores_system) os << " ignore system";
             os << "\n";
 
-            // Mode Body Statements
             print_stmts(x.body, os, 1);
 
-            // Mode Scoped Listeners
             for (const auto& l : x.listeners) {
                 print_listener(l, os, 1);
             }

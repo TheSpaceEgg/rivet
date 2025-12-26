@@ -5,7 +5,6 @@
 #include <variant>
 #include <vector>
 
-// --- Basic Types ---
 enum class ValType { Int, Float, String, Bool, Custom };
 
 struct TypeInfo {
@@ -24,7 +23,6 @@ struct SystemModeDecl {
     std::string name;
 };
 
-// --- Topic Declaration ---
 struct TopicDecl {
     SourceLoc loc{};
     std::string name; 
@@ -32,7 +30,6 @@ struct TopicDecl {
     TypeInfo type;
 };
 
-// --- Statements ---
 struct CallStmt {
     SourceLoc loc{};
     std::string callee;
@@ -64,9 +61,17 @@ struct TransitionStmt {
     std::string target_state;
 };
 
-using Stmt = std::variant<CallStmt, RequestStmt, PublishStmt, ReturnStmt, TransitionStmt>;
+// NEW: Log Statement
+enum class LogLevel { Print, Info, Warn, Error, Debug };
 
-// --- Function Declarations ---
+struct LogStmt {
+    SourceLoc loc{};
+    LogLevel level = LogLevel::Info;
+    std::vector<std::string> args;
+};
+
+using Stmt = std::variant<CallStmt, RequestStmt, PublishStmt, ReturnStmt, TransitionStmt, LogStmt>;
+
 struct FuncSignature {
     SourceLoc loc{};
     std::string name;
@@ -89,32 +94,24 @@ struct OnListenDecl {
     SourceLoc loc{};
     std::string source_node; 
     std::string topic_name;  
-    
-    // If delegates, this holds the function name. If not, body is used.
     std::string delegate_to; 
-
     FuncSignature sig;
     std::vector<Stmt> body;
 };
 
-// --- Node Declarations ---
 struct NodeDecl {
     SourceLoc loc{};
-    
     bool is_controller = false;    
     bool ignores_system = false;   
-
     std::string name;
     std::string type_name;
     std::string config_text;
-
     std::vector<TopicDecl> topics;        
     std::vector<OnRequestDecl> requests;  
-    std::vector<OnListenDecl> listeners; // Global listeners
+    std::vector<OnListenDecl> listeners; 
     std::vector<FuncDecl> private_funcs; 
 };
 
-// --- Mode Declarations ---
 struct ModeName {
     SourceLoc loc{};
     bool is_local_string = false;
@@ -123,15 +120,10 @@ struct ModeName {
 
 struct ModeDecl {
     SourceLoc loc{};
-    
     bool ignores_system = false;   
-
     std::string node_name;
     ModeName mode_name;
-    
     std::vector<Stmt> body;
-    
-    // NEW: Mode-specific listeners
     std::vector<OnListenDecl> listeners;
 };
 

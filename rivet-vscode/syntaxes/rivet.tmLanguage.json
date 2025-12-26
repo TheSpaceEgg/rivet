@@ -4,49 +4,50 @@
   "scopeName": "source.rivet",
   "patterns": [
     { "include": "#comments" },
-    { "include": "#keywords" },
     { "include": "#function-definition" },
+    { "include": "#keywords" },
+    { "include": "#declarations" },
     { "include": "#types" },
     { "include": "#strings" },
     { "include": "#constants" },
+    { "include": "#properties" },
     { "include": "#operators" }
   ],
   "repository": {
     "keywords": {
       "patterns": [
         {
-          "match": "\\b(if|else|return|do|while|for|request|publish)\\b",
+          "match": "\\b(if|else|return|do|while|for|request|publish|transition|start|stop)\\b",
           "name": "keyword.control.rivet"
         },
         {
-          "match": "\\b(onRequest|onListen)\\b",
-          "name": "keyword.control.directive.rivet"
-        },
-        {
-          "match": "\\b(node|mode|systemMode|topic)\\b",
-          "name": "variable.language.rivet"
+          "match": "\\b(node|mode|systemMode|topic|system)\\b",
+          "name": "storage.type.rivet"
         }
       ]
     },
     "function-definition": {
-      "comment": "func=Blue, name=Yellow",
-      "match": "\\b(func)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "match": "\\b(func|onRequest|onListen)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "storage.type.function.rivet" },
         "2": { "name": "entity.name.function.rivet" }
       }
     },
+    "declarations": {
+      "match": "\\b(topic|node)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.rivet" },
+        "2": { "name": "variable.other.rivet" }
+      }
+    },
+    "properties": {
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\.)",
+      "name": "variable.other.object.rivet"
+    },
     "types": {
-      "comment": "Types=Teal/Green",
       "patterns": [
-        {
-          "match": "\\b(int|float|string|bool|void)\\b",
-          "name": "support.type.primitive.rivet"
-        },
-        {
-          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b",
-          "name": "support.class.rivet"
-        }
+        { "match": "\\b(int|float|string|bool|void)\\b", "name": "support.type.primitive.rivet" },
+        { "match": "\\b[A-Z][a-zA-Z0-9_]*\\b", "name": "support.class.rivet" }
       ]
     },
     "comments": {

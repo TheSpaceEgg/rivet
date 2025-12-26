@@ -1,6 +1,7 @@
 #include "lexer.hpp"
 #include <cctype>
 #include <unordered_map>
+#include <iostream> 
 
 static TokenKind keyword_kind(std::string_view s) {
     static const std::unordered_map<std::string_view, TokenKind> kw = {
@@ -16,13 +17,16 @@ static TokenKind keyword_kind(std::string_view s) {
         {"publish",    TokenKind::KwPublish},
         {"onListen",   TokenKind::KwOnListen},
         {"topic",      TokenKind::KwTopic},
-        
-        // NEW MAPPINGS
         {"transition", TokenKind::KwTransition},
         {"system",     TokenKind::KwSystem},
         {"controller", TokenKind::KwController},
         {"ignore",     TokenKind::KwIgnore},
-        
+        {"log",        TokenKind::KwLog},
+        {"print",      TokenKind::KwPrint},
+        {"error",      TokenKind::KwError},
+        {"warn",       TokenKind::KwWarn},
+        {"info",       TokenKind::KwInfo},
+        {"debug",      TokenKind::KwDebug},
         {"int",        TokenKind::KwTypeInt},
         {"float",      TokenKind::KwTypeFloat},
         {"string",     TokenKind::KwTypeString},
@@ -82,7 +86,8 @@ void Lexer::handle_indent() {
 }
 
 void Lexer::skip_ws() {
-    while (cur() == ' ' || cur() == '\t') i_++;
+    // UPDATED: Now skips anything that isSpace declares as space
+    while (std::isspace((unsigned char)cur()) && cur() != '\n' && cur() != '\r') i_++;
 }
 
 void Lexer::skip_line_comment() {
@@ -115,9 +120,7 @@ Token Lexer::ident() {
 
 Token Lexer::number() {
     int s = i_;
-    // Handle negative numbers
     if (cur() == '-') i_++;
-
     while (std::isdigit((unsigned char)cur())) i_++;
     
     if (cur() == '.' && std::isdigit((unsigned char)peek(1))) {
@@ -125,7 +128,6 @@ Token Lexer::number() {
         while (std::isdigit((unsigned char)cur())) i_++;
         return make(TokenKind::Float, s, i_);
     }
-    
     return make(TokenKind::Int, s, i_);
 }
 
@@ -183,15 +185,13 @@ Token Lexer::next() {
     if (cur() == '"') return string();
 
     int s = i_;
-    // Check for negative number or arrow
+    
+    // UPDATED: Better handling for Minus vs Arrow vs Negative Number
     if (cur() == '-') {
-        if (peek(1) == '>') { 
-            i_ += 2; 
-            return make(TokenKind::Arrow, s, i_); 
-        }
-        if (std::isdigit((unsigned char)peek(1))) {
-            return number();
-        }
+        if (peek(1) == '>') { i_ += 2; return make(TokenKind::Arrow, s, i_); }
+        if (std::isdigit((unsigned char)peek(1))) return number();
+        // If it's just a '-', we currently consider it invalid or just a char. 
+        // We'll treat it as invalid for now unless we add Math operators.
     }
 
     if (cur() == '.') { i_++; return make(TokenKind::Dot, s, i_); }
@@ -203,7 +203,13 @@ Token Lexer::next() {
     if (cur() == '}') { i_++; return make(TokenKind::RBrace, s, i_); }
     if (cur() == '=' && peek(1) != '=') { i_++; return make(TokenKind::Assign, s, i_); }
 
-    diag_.error(src_.loc_from_offset(i_), "Unexpected character");
+    // If we get here, it's a character we don't know.
+    // If it is 'printable', show it. If not, it's invisible garbage.
+    if (std::isprint((unsigned char)cur())) {
+        diag_.error(src_.loc_from_offset(i_), std::string("Unexpected character: '") + cur() + "'");
+    } else {
+        diag_.error(src_.loc_from_offset(i_), "Unexpected invisible character (0x" + std::to_string((int)cur()) + ")");
+    }
     i_++;
     return make(TokenKind::Invalid, s, i_);
 }
