@@ -9,7 +9,7 @@ static void indent(std::ostream& os, int depth) {
 }
 
 static void print_type(const TypeInfo& t, std::ostream& os) {
-    switch(t.base) {
+    switch (t.base) {
         case ValType::Int:    os << "int"; break;
         case ValType::Float:  os << "float"; break;
         case ValType::String: os << "string"; break;
@@ -28,19 +28,96 @@ static void print_params(const std::vector<Param>& params, std::ostream& os) {
     os << ")";
 }
 
-static void print_stmt(const Stmt& stmt, std::ostream& os, int depth) {
+static void print_expr(const ExprPtr& e, std::ostream& os);
+
+static const char* binop_text(BinaryOp op) {
+    switch (op) {
+        case BinaryOp::Add: return "+";
+        case BinaryOp::Sub: return "-";
+        case BinaryOp::Mul: return "*";
+        case BinaryOp::Div: return "/";
+        case BinaryOp::Mod: return "%";
+        case BinaryOp::Eq:  return "==";
+        case BinaryOp::Neq: return "!=";
+        case BinaryOp::Lt:  return "<";
+        case BinaryOp::Lte: return "<=";
+        case BinaryOp::Gt:  return ">";
+        case BinaryOp::Gte: return ">=";
+        case BinaryOp::And: return "and";
+        case BinaryOp::Or:  return "or";
+    }
+    return "?";
+}
+
+static void print_expr(const ExprPtr& e, std::ostream& os) {
+    if (!e) { os << "<null>"; return; }
+
+    if (auto lit = std::get_if<Expr::Literal>(&e->v)) {
+        os << lit->text;
+        return;
+    }
+    if (auto id = std::get_if<Expr::Ident>(&e->v)) {
+        os << id->name;
+        return;
+    }
+    if (auto un = std::get_if<Expr::Unary>(&e->v)) {
+        if (un->op == UnaryOp::Not) os << "not ";
+        else os << "-";
+        print_expr(un->rhs, os);
+        return;
+    }
+    if (auto bin = std::get_if<Expr::Binary>(&e->v)) {
+        os << "(";
+        print_expr(bin->lhs, os);
+        os << " " << binop_text(bin->op) << " ";
+        print_expr(bin->rhs, os);
+        os << ")";
+        return;
+    }
+}
+
+static void print_stmt(const StmtPtr& sp, std::ostream& os, int depth);
+
+static void print_stmts(const std::vector<StmtPtr>& stmts, std::ostream& os, int depth) {
+    for (const auto& s : stmts) print_stmt(s, os, depth);
+}
+
+static void print_stmt(const StmtPtr& sp, std::ostream& os, int depth) {
+    if (!sp) return;
+
     indent(os, depth);
-    
-    // NEW: Log Statement
-    if (auto log = std::get_if<LogStmt>(&stmt)) {
+
+    if (auto ifs = std::get_if<IfStmt>(&sp->v)) {
+        os << "if ";
+        print_expr(ifs->cond, os);
+        os << ":\n";
+        print_stmts(ifs->then_body, os, depth + 1);
+
+        for (const auto& br : ifs->elifs) {
+            indent(os, depth);
+            os << "elif ";
+            print_expr(br.cond, os);
+            os << ":\n";
+            print_stmts(br.body, os, depth + 1);
+        }
+
+        if (!ifs->else_body.empty()) {
+            indent(os, depth);
+            os << "else:\n";
+            print_stmts(ifs->else_body, os, depth + 1);
+        }
+        return;
+    }
+
+    if (auto log = std::get_if<LogStmt>(&sp->v)) {
         if (log->level == LogLevel::Print) os << "print ";
         else {
             os << "log ";
-            switch(log->level) {
+            switch (log->level) {
                 case LogLevel::Error: os << "error "; break;
                 case LogLevel::Warn:  os << "warn "; break;
                 case LogLevel::Debug: os << "debug "; break;
-                default: break; // Info is default
+                default: break;
             }
         }
         for (size_t i = 0; i < log->args.size(); ++i) {
@@ -48,16 +125,20 @@ static void print_stmt(const Stmt& stmt, std::ostream& os, int depth) {
             os << log->args[i];
         }
         os << "\n";
+        return;
     }
-    else if (auto call = std::get_if<CallStmt>(&stmt)) {
+
+    if (auto call = std::get_if<CallStmt>(&sp->v)) {
         os << call->callee << "(";
         for (size_t i = 0; i < call->args.size(); ++i) {
             if (i > 0) os << ", ";
             os << call->args[i];
         }
         os << ")\n";
+        return;
     }
-    else if (auto req = std::get_if<RequestStmt>(&stmt)) {
+
+    if (auto req = std::get_if<RequestStmt>(&sp->v)) {
         os << "request ";
         if (req->is_silent) os << "silent ";
         os << req->target_node << "." << req->func_name << "(";
@@ -66,22 +147,25 @@ static void print_stmt(const Stmt& stmt, std::ostream& os, int depth) {
             os << req->args[i];
         }
         os << ")\n";
+        return;
     }
-    else if (auto pub = std::get_if<PublishStmt>(&stmt)) {
+
+    if (auto pub = std::get_if<PublishStmt>(&sp->v)) {
         os << pub->topic_handle << ".publish(" << pub->value << ")\n";
+        return;
     }
-    else if (auto ret = std::get_if<ReturnStmt>(&stmt)) {
+
+    if (auto ret = std::get_if<ReturnStmt>(&sp->v)) {
         os << "return " << ret->value << "\n";
+        return;
     }
-    else if (auto tr = std::get_if<TransitionStmt>(&stmt)) {
+
+    if (auto tr = std::get_if<TransitionStmt>(&sp->v)) {
         os << "transition ";
         if (tr->is_system) os << "system ";
         os << "\"" << tr->target_state << "\"\n";
+        return;
     }
-}
-
-static void print_stmts(const std::vector<Stmt>& stmts, std::ostream& os, int depth) {
-    for (const auto& s : stmts) print_stmt(s, os, depth);
 }
 
 static void print_listener(const OnListenDecl& lis, std::ostream& os, int depth) {
@@ -111,14 +195,11 @@ void print_ast(const Program& p, std::ostream& os) {
 
         if constexpr (std::is_same_v<T, SystemModeDecl>) {
             os << "systemMode " << x.name << "\n";
-        }
-        else if constexpr (std::is_same_v<T, NodeDecl>) {
+        } else if constexpr (std::is_same_v<T, NodeDecl>) {
             os << "\nnode ";
             if (x.is_controller) os << "controller ";
             os << x.name << " : " << x.type_name;
-            
             if (x.ignores_system) os << " ignore system";
-            
             if (!x.config_text.empty()) os << " " << x.config_text;
             os << "\n";
 
@@ -144,9 +225,7 @@ void print_ast(const Program& p, std::ostream& os) {
                 }
             }
 
-            for (const auto& l : x.listeners) {
-                print_listener(l, os, 1);
-            }
+            for (const auto& l : x.listeners) print_listener(l, os, 1);
 
             for (const auto& f : x.private_funcs) {
                 indent(os, 1);
@@ -157,8 +236,7 @@ void print_ast(const Program& p, std::ostream& os) {
                 os << "\n";
                 print_stmts(f.body, os, 2);
             }
-        }
-        else if constexpr (std::is_same_v<T, ModeDecl>) {
+        } else if constexpr (std::is_same_v<T, ModeDecl>) {
             os << "\nmode " << x.node_name << "->";
             print_modename(x.mode_name, os);
             if (x.ignores_system) os << " ignore system";
@@ -166,16 +244,11 @@ void print_ast(const Program& p, std::ostream& os) {
 
             print_stmts(x.body, os, 1);
 
-            for (const auto& l : x.listeners) {
-                print_listener(l, os, 1);
-            }
-        }
-        else if constexpr (std::is_same_v<T, FuncDecl>) {
+            for (const auto& l : x.listeners) print_listener(l, os, 1);
+        } else if constexpr (std::is_same_v<T, FuncDecl>) {
             os << "func " << x.sig.name << "\n";
         }
     };
 
-    for (const auto& decl : p.decls) {
-        std::visit(visitor, decl);
-    }
+    for (const auto& decl : p.decls) std::visit(visitor, decl);
 }

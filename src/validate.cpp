@@ -2,6 +2,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <iostream>
+#include <string_view>
+#include <vector>
+#include <functional>
+#include <cctype>
 
 struct TopicSymbol {
     TypeInfo type;
@@ -43,6 +47,42 @@ static ValType resolve_type(const std::string& val, const std::vector<Param>& cu
     }
 
     return ValType::Int; 
+}
+
+static std::string trim_copy(std::string_view sv) {
+    size_t b = 0;
+    while (b < sv.size() && std::isspace((unsigned char)sv[b])) b++;
+    size_t e = sv.size();
+    while (e > b && std::isspace((unsigned char)sv[e - 1])) e--;
+    return std::string(sv.substr(b, e - b));
+}
+
+static bool is_simple_ident(std::string_view sv) {
+    if (sv.empty()) return false;
+    auto is_start = [&](unsigned char c) { return std::isalpha(c) || c == '_'; };
+    auto is_body = [&](unsigned char c) { return std::isalnum(c) || c == '_'; };
+    if (!is_start((unsigned char)sv[0])) return false;
+    for (size_t i = 1; i < sv.size(); ++i) {
+        if (!is_body((unsigned char)sv[i])) return false;
+    }
+    return true;
+}
+
+static std::vector<std::string> extract_interpolations(const std::string& s) {
+    // Input includes quotes ("...") because lexer preserves them for codegen.
+    // We only validate simple identifiers inside {braces}; complex expressions are ignored.
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (true) {
+        size_t l = s.find('{', i);
+        if (l == std::string::npos) break;
+        size_t r = s.find('}', l + 1);
+        if (r == std::string::npos) break;
+        std::string inner = trim_copy(std::string_view(s).substr(l + 1, r - l - 1));
+        if (!inner.empty()) out.push_back(std::move(inner));
+        i = r + 1;
+    }
+    return out;
 }
 
 static void collect_symbols(const Program& p, const DiagnosticEngine& diag) {
@@ -97,38 +137,149 @@ static void collect_symbols(const Program& p, const DiagnosticEngine& diag) {
 static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
     bool has_error = false;
 
-    auto validate_stmts = [&](const std::vector<Stmt>& stmts, 
-                              const std::string& current_node, 
-                              const std::vector<Param>& current_params) {
-        for (const auto& stmt : stmts) {
-            
-            // Validate Log Arguments (Variables)
-            if (auto log = std::get_if<LogStmt>(&stmt)) {
-                for (const auto& arg : log->args) {
-                    // Skip literals
-                    if (arg.size() >= 2 && arg.front() == '"') continue;
-                    if (isdigit(arg[0]) || arg[0] == '-') continue;
-                    if (arg == "true" || arg == "false") continue;
+    auto is_numeric = [](ValType t) { return t == ValType::Int || t == ValType::Float; };
 
-                    // Must be a parameter or topic (if inside node)
-                    bool found = false;
-                    for (const auto& p : current_params) {
-                        if (p.name == arg) { found = true; break; }
-                    }
-                    if (!found && g_nodes.find(current_node) != g_nodes.end()) {
-                         if (g_nodes[current_node].topics.count(arg)) found = true;
-                    }
+    auto infer_expr = [&](auto&& self,
+                          const ExprPtr& e,
+                          const std::string& current_node,
+                          const std::vector<Param>& current_params) -> ValType {
+        if (!e) return ValType::Int;
 
-                    if (!found) {
-                        diag.error(log->loc, "Unknown variable '" + arg + "' in log statement");
+        if (auto lit = std::get_if<Expr::Literal>(&e->v)) {
+            switch (lit->kind) {
+                case Expr::Literal::Kind::Int: return ValType::Int;
+                case Expr::Literal::Kind::Float: return ValType::Float;
+                case Expr::Literal::Kind::String: return ValType::String;
+                case Expr::Literal::Kind::Bool: return ValType::Bool;
+            }
+        }
+        if (auto id = std::get_if<Expr::Ident>(&e->v)) {
+            for (const auto& p : current_params) {
+                if (p.name == id->name) return p.type.base;
+            }
+            auto itn = g_nodes.find(current_node);
+            if (itn != g_nodes.end()) {
+                auto itt = itn->second.topics.find(id->name);
+                if (itt != itn->second.topics.end()) return itt->second.type.base;
+            }
+            diag.error(e->loc, "Unknown identifier '" + id->name + "' in expression");
+            has_error = true;
+            return ValType::Int;
+        }
+        if (auto un = std::get_if<Expr::Unary>(&e->v)) {
+            ValType rhs = self(self, un->rhs, current_node, current_params);
+            if (un->op == UnaryOp::Not) {
+                if (rhs != ValType::Bool) {
+                    diag.error(e->loc, "Unary 'not' requires a bool operand");
+                    has_error = true;
+                }
+                return ValType::Bool;
+            }
+            if (un->op == UnaryOp::Neg) {
+                if (!is_numeric(rhs)) {
+                    diag.error(e->loc, "Unary '-' requires a numeric operand");
+                    has_error = true;
+                }
+                return rhs;
+            }
+        }
+        if (auto bin = std::get_if<Expr::Binary>(&e->v)) {
+            ValType lt = self(self, bin->lhs, current_node, current_params);
+            ValType rt = self(self, bin->rhs, current_node, current_params);
+
+            auto promote_num = [&](ValType a, ValType b) {
+                return (a == ValType::Float || b == ValType::Float) ? ValType::Float : ValType::Int;
+            };
+
+            switch (bin->op) {
+                case BinaryOp::Add:
+                case BinaryOp::Sub:
+                case BinaryOp::Mul:
+                case BinaryOp::Div:
+                case BinaryOp::Mod: {
+                    if (!is_numeric(lt) || !is_numeric(rt)) {
+                        diag.error(e->loc, "Arithmetic operator requires numeric operands");
+                        has_error = true;
+                        return ValType::Int;
+                    }
+                    return promote_num(lt, rt);
+                }
+                case BinaryOp::Eq:
+                case BinaryOp::Neq: {
+                    if (lt != rt) {
+                        diag.error(e->loc, "Equality operator requires operands of the same type");
                         has_error = true;
                     }
+                    return ValType::Bool;
+                }
+                case BinaryOp::Lt:
+                case BinaryOp::Lte:
+                case BinaryOp::Gt:
+                case BinaryOp::Gte: {
+                    if (!is_numeric(lt) || !is_numeric(rt)) {
+                        diag.error(e->loc, "Comparison operator requires numeric operands");
+                        has_error = true;
+                    }
+                    return ValType::Bool;
+                }
+                case BinaryOp::And:
+                case BinaryOp::Or: {
+                    if (lt != ValType::Bool || rt != ValType::Bool) {
+                        diag.error(e->loc, "Boolean operator requires bool operands");
+                        has_error = true;
+                    }
+                    return ValType::Bool;
+                }
+            }
+        }
+        return ValType::Int;
+    };
+
+    std::function<void(const std::vector<StmtPtr>&,
+                       const std::string&,
+                       const std::vector<Param>&)> validate_stmts;
+
+    validate_stmts = [&](const std::vector<StmtPtr>& stmts,
+                         const std::string& current_node,
+                         const std::vector<Param>& current_params) {
+        for (const auto& sp : stmts) {
+            if (!sp) continue;
+
+            // Validate Log Arguments (Variables)
+            if (auto log = std::get_if<LogStmt>(&sp->v)) {
+                for (const auto& arg : log->args) {
+                    auto check_var = [&](const std::string& name) {
+                        if (name.empty()) return;
+                        if (name == "true" || name == "false") return;
+
+                        bool found = false;
+                        for (const auto& p : current_params) {
+                            if (p.name == name) { found = true; break; }
+                        }
+                        if (!found && g_nodes.find(current_node) != g_nodes.end()) {
+                            if (g_nodes[current_node].topics.count(name)) found = true;
+                        }
+                        if (!found) {
+                            diag.error(log->loc, "Unknown variable '" + name + "' in log statement");
+                            has_error = true;
+                        }
+                    };
+
+                    if (arg.size() >= 2 && arg.front() == '"') {
+                        for (const auto& inner : extract_interpolations(arg)) {
+                            if (is_simple_ident(inner)) check_var(inner);
+                        }
+                        continue;
+                    }
+
+                    if (!arg.empty() && (isdigit((unsigned char)arg[0]) || arg[0] == '-')) continue;
+                    check_var(arg);
                 }
             }
 
-            if (auto pub = std::get_if<PublishStmt>(&stmt)) {
+            if (auto pub = std::get_if<PublishStmt>(&sp->v)) {
                 if (g_nodes.find(current_node) == g_nodes.end()) continue;
-                
+
                 auto& node_sym = g_nodes[current_node];
                 if (node_sym.topics.find(pub->topic_handle) == node_sym.topics.end()) {
                     diag.error(pub->loc, "Unknown topic handle '" + pub->topic_handle + "' in node '" + current_node + "'");
@@ -138,15 +289,15 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
 
                 TypeInfo expected = node_sym.topics[pub->topic_handle].type;
                 ValType actual_base = resolve_type(pub->value, current_params);
-                
+
                 if (expected.base != actual_base) {
-                    diag.error(pub->loc, "Type mismatch in publish. Expected " + 
+                    diag.error(pub->loc, "Type mismatch in publish. Expected " +
                                std::to_string((int)expected.base) + " got " + std::to_string((int)actual_base));
                     has_error = true;
                 }
             }
 
-            if (auto req = std::get_if<RequestStmt>(&stmt)) {
+            if (auto req = std::get_if<RequestStmt>(&sp->v)) {
                 if (g_nodes.find(req->target_node) == g_nodes.end()) {
                     diag.error(req->loc, "Unknown target node '" + req->target_node + "'");
                     has_error = true;
@@ -162,13 +313,13 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
 
                 auto& func_sym = target_sym.public_funcs[req->func_name];
                 if (req->args.size() != func_sym.param_types.size()) {
-                    diag.error(req->loc, "Argument count mismatch. Expected " + 
+                    diag.error(req->loc, "Argument count mismatch. Expected " +
                                std::to_string(func_sym.param_types.size()) + ", got " + std::to_string(req->args.size()));
                     has_error = true;
                 }
             }
-            
-            if (auto trans = std::get_if<TransitionStmt>(&stmt)) {
+
+            if (auto trans = std::get_if<TransitionStmt>(&sp->v)) {
                 if (trans->is_system) {
                     if (g_nodes.find(current_node) != g_nodes.end()) {
                         auto& node_sym = g_nodes[current_node];
@@ -178,78 +329,97 @@ static bool check_logic(const Program& p, const DiagnosticEngine& diag) {
                         }
                     }
                     if (g_system_modes.find(trans->target_state) == g_system_modes.end()) {
-                         diag.error(trans->loc, "Unknown system mode '" + trans->target_state + "'");
-                         has_error = true;
+                        diag.error(trans->loc, "Unknown system mode '" + trans->target_state + "'");
+                        has_error = true;
                     }
                 }
             }
 
-            if (auto call = std::get_if<CallStmt>(&stmt)) {
-                 if (g_nodes.find(current_node) == g_nodes.end()) continue;
-                 auto& ns = g_nodes[current_node];
-                 if (ns.private_funcs.find(call->callee) == ns.private_funcs.end()) {
-                      diag.error(call->loc, "Unknown private function '" + call->callee + "'");
-                      has_error = true;
-                 }
-                 auto& func_sym = ns.private_funcs[call->callee];
-                 if (call->args.size() != func_sym.param_types.size()) {
-                     diag.error(call->loc, "Arg count mismatch in local call");
-                     has_error = true;
-                 }
+            if (auto call = std::get_if<CallStmt>(&sp->v)) {
+                if (g_nodes.find(current_node) == g_nodes.end()) continue;
+                auto& ns = g_nodes[current_node];
+                if (ns.private_funcs.find(call->callee) == ns.private_funcs.end()) {
+                    diag.error(call->loc, "Unknown private function '" + call->callee + "'");
+                    has_error = true;
+                } else {
+                    auto& func_sym = ns.private_funcs[call->callee];
+                    if (call->args.size() != func_sym.param_types.size()) {
+                        diag.error(call->loc, "Arg count mismatch in local call");
+                        has_error = true;
+                    }
+                }
+            }
+
+            if (auto ifs = std::get_if<IfStmt>(&sp->v)) {
+                ValType ct = infer_expr(infer_expr, ifs->cond, current_node, current_params);
+                if (ct != ValType::Bool) {
+                    diag.error(ifs->loc, "If condition must be bool");
+                    has_error = true;
+                }
+                validate_stmts(ifs->then_body, current_node, current_params);
+                for (const auto& br : ifs->elifs) {
+                    ValType bt = infer_expr(infer_expr, br.cond, current_node, current_params);
+                    if (bt != ValType::Bool) {
+                        diag.error(br.loc, "Elif condition must be bool");
+                        has_error = true;
+                    }
+                    validate_stmts(br.body, current_node, current_params);
+                }
+                validate_stmts(ifs->else_body, current_node, current_params);
             }
         }
     };
 
     auto validate_listener = [&](const OnListenDecl& lis, const std::string& current_node) {
-         std::string src = lis.source_node.empty() ? current_node : lis.source_node;
-         if (g_nodes.find(src) == g_nodes.end()) {
-             diag.error(lis.loc, "Unknown node '" + src + "' in listener");
-             has_error = true;
-             return;
-         }
-         auto& src_node = g_nodes[src];
-         if (src_node.topics.find(lis.topic_name) == src_node.topics.end()) {
-             diag.error(lis.loc, "Unknown topic '" + lis.topic_name + "' on node '" + src + "'");
-             has_error = true;
-             return;
-         }
-         TypeInfo topicType = src_node.topics[lis.topic_name].type;
+        std::string src = lis.source_node.empty() ? current_node : lis.source_node;
+        if (g_nodes.find(src) == g_nodes.end()) {
+            diag.error(lis.loc, "Unknown node '" + src + "' in listener");
+            has_error = true;
+            return;
+        }
+        auto& src_node = g_nodes[src];
+        if (src_node.topics.find(lis.topic_name) == src_node.topics.end()) {
+            diag.error(lis.loc, "Unknown topic '" + lis.topic_name + "' on node '" + src + "'");
+            has_error = true;
+            return;
+        }
+        TypeInfo topicType = src_node.topics[lis.topic_name].type;
 
-         if (!lis.delegate_to.empty()) {
-             auto& my_node = g_nodes[current_node];
-             if (my_node.private_funcs.find(lis.delegate_to) == my_node.private_funcs.end()) {
-                 diag.error(lis.loc, "Cannot delegate to unknown function '" + lis.delegate_to + "'");
-                 has_error = true;
-                 return;
-             }
-             auto& fn = my_node.private_funcs[lis.delegate_to];
-             if (fn.param_types.size() != 1) {
-                 diag.error(lis.loc, "Delegated function must accept exactly 1 argument (the topic payload)");
-                 has_error = true;
-             } else if (!check_types(topicType, fn.param_types[0])) {
-                 diag.error(lis.loc, "Type mismatch: Topic is " + std::to_string((int)topicType.base) + 
-                                     " but function expects " + std::to_string((int)fn.param_types[0].base));
-                 has_error = true;
-             }
-         } else {
-             validate_stmts(lis.body, current_node, lis.sig.params);
-         }
+        if (!lis.delegate_to.empty()) {
+            auto& my_node = g_nodes[current_node];
+            if (my_node.private_funcs.find(lis.delegate_to) == my_node.private_funcs.end()) {
+                diag.error(lis.loc, "Cannot delegate to unknown function '" + lis.delegate_to + "'");
+                has_error = true;
+                return;
+            }
+            auto& fn = my_node.private_funcs[lis.delegate_to];
+            if (fn.param_types.size() != 1) {
+                diag.error(lis.loc, "Delegated function must accept exactly 1 argument (the topic payload)");
+                has_error = true;
+            } else if (!check_types(topicType, fn.param_types[0])) {
+                diag.error(lis.loc, "Type mismatch: Topic is " + std::to_string((int)topicType.base) +
+                                   " but function expects " + std::to_string((int)fn.param_types[0].base));
+                has_error = true;
+            }
+        } else {
+            validate_stmts(lis.body, current_node, lis.sig.params);
+        }
     };
 
     for (const auto& decl : p.decls) {
         if (auto n = std::get_if<NodeDecl>(&decl)) {
-            for (const auto& req : n->requests)      validate_stmts(req.body, n->name, req.sig.params);
+            for (const auto& req : n->requests)       validate_stmts(req.body, n->name, req.sig.params);
             for (const auto& func : n->private_funcs) validate_stmts(func.body, n->name, func.sig.params);
-            for (const auto& lis : n->listeners)     validate_listener(lis, n->name);
-        }
-        else if (auto m = std::get_if<ModeDecl>(&decl)) {
+            for (const auto& lis : n->listeners)      validate_listener(lis, n->name);
+        } else if (auto m = std::get_if<ModeDecl>(&decl)) {
             validate_stmts(m->body, m->node_name, {});
-            for (const auto& lis : m->listeners)     validate_listener(lis, m->node_name);
+            for (const auto& lis : m->listeners)      validate_listener(lis, m->node_name);
         }
     }
 
     return !has_error;
 }
+
 
 bool validate_program(const Program& program, const DiagnosticEngine& diag) {
     collect_symbols(program, diag);

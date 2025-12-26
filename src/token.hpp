@@ -12,22 +12,31 @@ enum class TokenKind {
     // Identifiers / literals
     Ident, Int, Float, String,
 
-    // Keywords
+    // Keywords (decls / statements)
     KwNode, KwMode, KwDo, KwSystemMode,
     KwRequest, KwOnRequest, KwSilent, KwReturn,
     KwFunc, KwPublish, KwOnListen, KwTopic,
     KwTransition, KwSystem, KwController, KwIgnore,
-    
-    // NEW: Log & Print
+
+    // Log & Print
     KwLog, KwPrint,
     KwError, KwWarn, KwInfo, KwDebug,
 
     // Types
     KwTypeInt, KwTypeFloat, KwTypeString, KwTypeBool,
 
-    // Punctuation
+    // Conditionals / boolean ops
+    KwIf, KwElif, KwElse,
+    KwAnd, KwOr, KwNot,
+    KwTrue, KwFalse,
+
+    // Punctuation / operators
     Colon, Comma, Dot, Arrow, Assign,
     LParen, RParen, LBrace, RBrace,
+
+    Plus, Minus, Star, Slash, Percent,
+    EqEq, NotEq,
+    Less, LessEq, Greater, GreaterEq,
 };
 
 struct Token {

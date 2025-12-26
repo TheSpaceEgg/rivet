@@ -96,7 +96,7 @@ std::vector<std::string> Parser::parse_call_args() {
         while (true) {
             if (cur_.kind == TokenKind::Ident || cur_.kind == TokenKind::Int ||
                 cur_.kind == TokenKind::Float || cur_.kind == TokenKind::String ||
-                cur_.kind == TokenKind::KwTypeBool) { 
+                cur_.kind == TokenKind::KwTrue || cur_.kind == TokenKind::KwFalse) { 
                 args.push_back(std::string(cur_.lexeme));
                 advance();
             } else {
@@ -130,6 +130,136 @@ std::vector<std::string> Parser::parse_print_args() {
     }
 
     return args;
+}
+
+int Parser::bin_prec(TokenKind k) const {
+    switch (k) {
+        case TokenKind::KwOr: return 1;
+        case TokenKind::KwAnd: return 2;
+        case TokenKind::EqEq:
+        case TokenKind::NotEq: return 3;
+        case TokenKind::Less:
+        case TokenKind::LessEq:
+        case TokenKind::Greater:
+        case TokenKind::GreaterEq: return 4;
+        case TokenKind::Plus:
+        case TokenKind::Minus: return 5;
+        case TokenKind::Star:
+        case TokenKind::Slash:
+        case TokenKind::Percent: return 6;
+        default: return -1;
+    }
+}
+
+std::optional<BinaryOp> Parser::tok_to_binop(TokenKind k) const {
+    switch (k) {
+        case TokenKind::KwOr: return BinaryOp::Or;
+        case TokenKind::KwAnd: return BinaryOp::And;
+        case TokenKind::EqEq: return BinaryOp::Eq;
+        case TokenKind::NotEq: return BinaryOp::Neq;
+        case TokenKind::Less: return BinaryOp::Lt;
+        case TokenKind::LessEq: return BinaryOp::Lte;
+        case TokenKind::Greater: return BinaryOp::Gt;
+        case TokenKind::GreaterEq: return BinaryOp::Gte;
+        case TokenKind::Plus: return BinaryOp::Add;
+        case TokenKind::Minus: return BinaryOp::Sub;
+        case TokenKind::Star: return BinaryOp::Mul;
+        case TokenKind::Slash: return BinaryOp::Div;
+        case TokenKind::Percent: return BinaryOp::Mod;
+        default: return std::nullopt;
+    }
+}
+
+ExprPtr Parser::parse_primary() {
+    SourceLoc loc = cur_.loc;
+
+    if (cur_.kind == TokenKind::Int) {
+        Expr::Literal lit{Expr::Literal::Kind::Int, std::string(cur_.lexeme)};
+        advance();
+        auto e = std::make_shared<Expr>();
+        e->loc = loc; e->v = std::move(lit);
+        return e;
+    }
+    if (cur_.kind == TokenKind::Float) {
+        Expr::Literal lit{Expr::Literal::Kind::Float, std::string(cur_.lexeme)};
+        advance();
+        auto e = std::make_shared<Expr>();
+        e->loc = loc; e->v = std::move(lit);
+        return e;
+    }
+    if (cur_.kind == TokenKind::String) {
+        Expr::Literal lit{Expr::Literal::Kind::String, std::string(cur_.lexeme)};
+        advance();
+        auto e = std::make_shared<Expr>();
+        e->loc = loc; e->v = std::move(lit);
+        return e;
+    }
+    if (cur_.kind == TokenKind::KwTrue || cur_.kind == TokenKind::KwFalse) {
+        Expr::Literal lit{Expr::Literal::Kind::Bool, std::string(cur_.lexeme)};
+        advance();
+        auto e = std::make_shared<Expr>();
+        e->loc = loc; e->v = std::move(lit);
+        return e;
+    }
+    if (cur_.kind == TokenKind::Ident) {
+        Expr::Ident id{std::string(cur_.lexeme)};
+        advance();
+        auto e = std::make_shared<Expr>();
+        e->loc = loc; e->v = std::move(id);
+        return e;
+    }
+    if (match(TokenKind::LParen)) {
+        auto e = parse_expr(0);
+        expect(TokenKind::RParen, "Expected ')'");
+        return e;
+    }
+
+    diag_.error(cur_.loc, "Expected expression");
+    advance();
+    auto e = std::make_shared<Expr>();
+    e->loc = loc;
+    e->v = Expr::Literal{Expr::Literal::Kind::Int, "0"};
+    return e;
+}
+
+ExprPtr Parser::parse_unary() {
+    SourceLoc loc = cur_.loc;
+    if (match(TokenKind::KwNot)) {
+        Expr::Unary u{UnaryOp::Not, parse_unary()};
+        auto e = std::make_shared<Expr>();
+        e->loc = loc; e->v = std::move(u);
+        return e;
+    }
+    if (match(TokenKind::Minus)) {
+        Expr::Unary u{UnaryOp::Neg, parse_unary()};
+        auto e = std::make_shared<Expr>();
+        e->loc = loc; e->v = std::move(u);
+        return e;
+    }
+    return parse_primary();
+}
+
+ExprPtr Parser::parse_expr(int min_prec) {
+    auto lhs = parse_unary();
+    while (true) {
+        auto op = tok_to_binop(cur_.kind);
+        if (!op) break;
+        int prec = bin_prec(cur_.kind);
+        if (prec < min_prec) break;
+
+        SourceLoc loc = cur_.loc;
+        TokenKind opTok = cur_.kind;
+        advance();
+
+        auto rhs = parse_expr(prec + 1);
+
+        Expr::Binary b{*op, lhs, rhs};
+        auto e = std::make_shared<Expr>();
+        e->loc = loc;
+        e->v = std::move(b);
+        lhs = e;
+    }
+    return lhs;
 }
 TypeInfo Parser::parse_type() {
     TypeInfo t;
@@ -195,16 +325,16 @@ TopicDecl Parser::parse_topic_decl() {
     return t;
 }
 
-std::vector<Stmt> Parser::parse_indented_block_stmts() {
-    std::vector<Stmt> stmts;
+std::vector<StmtPtr> Parser::parse_indented_block_stmts() {
+    std::vector<StmtPtr> stmts;
     expect(TokenKind::Newline, "Expected newline before indented block");
-    while (match(TokenKind::Newline)) {} 
+    while (match(TokenKind::Newline)) {}
     expect(TokenKind::Indent, "Expected indented block");
-    
+
     while (cur_.kind != TokenKind::Eof) {
         if (match(TokenKind::Dedent)) break;
         if (match(TokenKind::Newline)) continue;
-        
+
         if (auto s = parse_stmt()) {
             stmts.push_back(*s);
         } else {
@@ -318,78 +448,126 @@ NodeDecl Parser::parse_node_decl() {
     return n;
 }
 
-std::optional<Stmt> Parser::parse_stmt() {
+
+template <typename T>
+static StmtPtr wrap_stmt(T&& node) {
+    auto s = std::make_shared<Stmt>();
+    s->loc = node.loc;
+    s->v = std::forward<T>(node);
+    return s;
+}
+
+StmtPtr Parser::parse_if_stmt() {
+    Token startTok = cur_;
+    expect(TokenKind::KwIf, "Expected 'if'");
+    IfStmt ifs;
+    ifs.loc = startTok.loc;
+    ifs.cond = parse_expr(0);
+    expect(TokenKind::Colon, "Expected ':' after if condition");
+    ifs.then_body = parse_indented_block_stmts();
+
+    // zero or more elif
+    while (cur_.kind == TokenKind::KwElif) {
+        Token eTok = cur_;
+        advance();
+        IfElifBranch br;
+        br.loc = eTok.loc;
+        br.cond = parse_expr(0);
+        expect(TokenKind::Colon, "Expected ':' after elif condition");
+        br.body = parse_indented_block_stmts();
+        ifs.elifs.push_back(std::move(br));
+    }
+
+    // optional else
+    if (cur_.kind == TokenKind::KwElse) {
+        advance();
+        expect(TokenKind::Colon, "Expected ':' after else");
+        ifs.else_body = parse_indented_block_stmts();
+    }
+
+    return wrap_stmt(std::move(ifs));
+}
+
+std::optional<StmtPtr> Parser::parse_stmt() {
+    if (cur_.kind == TokenKind::KwIf) {
+        return parse_if_stmt();
+    }
+
     if (cur_.kind == TokenKind::KwPrint) {
         LogStmt log;
         log.loc = cur_.loc;
         log.level = LogLevel::Print;
         advance();
         log.args = parse_print_args();
-        return log;
+        return wrap_stmt(std::move(log));
     }
     if (cur_.kind == TokenKind::KwLog) {
         LogStmt log;
         log.loc = cur_.loc;
         advance(); // consume 'log'
-        
-        // 1. Consume the Level Keyword FIRST
+
         if (match(TokenKind::KwError))      log.level = LogLevel::Error;
         else if (match(TokenKind::KwWarn))  log.level = LogLevel::Warn;
         else if (match(TokenKind::KwInfo))  log.level = LogLevel::Info;
         else if (match(TokenKind::KwDebug)) log.level = LogLevel::Debug;
-        else log.level = LogLevel::Info; // Default if omitted
+        else log.level = LogLevel::Info;
 
-        // 2. NOW parse the single interpolated string
-        log.args = parse_print_args(); 
-        return log;
+        log.args = parse_print_args();
+        return wrap_stmt(std::move(log));
     }
     if (cur_.kind == TokenKind::KwRequest) {
         RequestStmt req;
         req.loc = cur_.loc;
-        advance(); 
+        advance();
         if (match(TokenKind::KwSilent)) req.is_silent = true;
         req.target_node = parse_ident_text("Expected node");
         expect(TokenKind::Dot, "Expected '.'");
         req.func_name = parse_ident_text("Expected func");
-        req.args = parse_call_args(); 
-        return req;
+        req.args = parse_call_args();
+        return wrap_stmt(std::move(req));
     }
     if (cur_.kind == TokenKind::KwReturn) {
         ReturnStmt ret;
         ret.loc = cur_.loc;
         advance();
-        if (cur_.kind == TokenKind::Ident || cur_.kind == TokenKind::Int || cur_.kind == TokenKind::String) {
+        if (cur_.kind == TokenKind::Ident || cur_.kind == TokenKind::Int || cur_.kind == TokenKind::String ||
+            cur_.kind == TokenKind::KwTrue || cur_.kind == TokenKind::KwFalse) {
             ret.value = std::string(cur_.lexeme);
             advance();
         }
-        return ret;
+        return wrap_stmt(std::move(ret));
     }
     if (cur_.kind == TokenKind::KwTransition) {
         TransitionStmt t;
         t.loc = cur_.loc;
-        advance(); 
+        advance();
         if (match(TokenKind::KwSystem)) t.is_system = true;
         if (cur_.kind == TokenKind::String) { t.target_state = strip_quotes(cur_.lexeme); advance(); }
         else { t.target_state = parse_ident_text("Expected state"); }
-        return t;
+        return wrap_stmt(std::move(t));
     }
     if (cur_.kind == TokenKind::Ident) {
         Token nameTok = cur_;
         std::string identName(cur_.lexeme);
         advance();
         if (cur_.kind == TokenKind::Dot) {
-            advance(); 
+            advance();
             if (match(TokenKind::KwPublish)) {
-                PublishStmt pub; pub.loc = nameTok.loc; pub.topic_handle = identName;
+                PublishStmt pub;
+                pub.loc = nameTok.loc;
+                pub.topic_handle = identName;
                 auto args = parse_call_args();
                 if (!args.empty()) pub.value = args[0];
-                return pub;
+                return wrap_stmt(std::move(pub));
             }
         }
         if (cur_.kind == TokenKind::LParen) {
-            CallStmt call; call.loc = nameTok.loc; call.callee = identName;
-            call.args = parse_call_args(); return call;
-        } 
+            CallStmt call;
+            call.loc = nameTok.loc;
+            call.callee = identName;
+            call.args = parse_call_args();
+            return wrap_stmt(std::move(call));
+        }
     }
     return std::nullopt;
 }

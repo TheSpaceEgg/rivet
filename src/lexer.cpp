@@ -30,6 +30,14 @@ static TokenKind keyword_kind(std::string_view s) {
         {"float",      TokenKind::KwTypeFloat},
         {"string",     TokenKind::KwTypeString},
         {"bool",       TokenKind::KwTypeBool},
+        {"if",         TokenKind::KwIf},
+        {"elif",       TokenKind::KwElif},
+        {"else",       TokenKind::KwElse},
+        {"and",        TokenKind::KwAnd},
+        {"or",         TokenKind::KwOr},
+        {"not",        TokenKind::KwNot},
+        {"true",       TokenKind::KwTrue},
+        {"false",      TokenKind::KwFalse},
     };
     auto it = kw.find(s);
     return it == kw.end() ? TokenKind::Ident : it->second;
@@ -87,6 +95,18 @@ void Lexer::skip_line_comment() {
     while (!eof() && cur() != '\n' && cur() != '\r') i_++;
 }
 
+void Lexer::skip_block_comment() {
+    // Assumes current is '/' and next is '*'
+    int start = i_;
+    i_ += 2; // consume /*
+    while (!eof()) {
+        if (cur() == '*' && peek(1) == '/') { i_ += 2; return; }
+        i_++;
+    }
+    // Unterminated block comment
+    diag_.error(src_.loc_from_offset(start), "Unterminated block comment");
+}
+
 Token Lexer::ident() {
     int s = i_;
     while (!eof() && (std::isalnum((unsigned char)cur()) || cur() == '_')) i_++;
@@ -130,15 +150,21 @@ Token Lexer::next() {
     if (cur() == '\n' || cur() == '\r') { emit_newline(); return next(); }
     skip_ws();
     if (cur() == '/' && peek(1) == '/') { skip_line_comment(); return next(); }
+    if (cur() == '/' && peek(1) == '*') { skip_block_comment(); return next(); }
     if (std::isalpha((unsigned char)cur()) || cur() == '_') return ident();
     if (std::isdigit((unsigned char)cur())) return number();
     if (cur() == '"') return string();
     
     int s = i_;
-    if (cur() == '-') {
-        if (peek(1) == '>') { i_ += 2; return make(TokenKind::Arrow, s, i_); }
-        return number();
-    }
+
+    // Two-character operators / punctuation
+    if (cur() == '-' && peek(1) == '>') { i_ += 2; return make(TokenKind::Arrow, s, i_); }
+    if (cur() == '=' && peek(1) == '=') { i_ += 2; return make(TokenKind::EqEq, s, i_); }
+    if (cur() == '!' && peek(1) == '=') { i_ += 2; return make(TokenKind::NotEq, s, i_); }
+    if (cur() == '<' && peek(1) == '=') { i_ += 2; return make(TokenKind::LessEq, s, i_); }
+    if (cur() == '>' && peek(1) == '=') { i_ += 2; return make(TokenKind::GreaterEq, s, i_); }
+
+    // Single-character punctuation
     if (cur() == '.') { i_++; return make(TokenKind::Dot, s, i_); }
     if (cur() == ':') { i_++; return make(TokenKind::Colon, s, i_); }
     if (cur() == ',') { i_++; return make(TokenKind::Comma, s, i_); }
@@ -146,8 +172,23 @@ Token Lexer::next() {
     if (cur() == ')') { i_++; return make(TokenKind::RParen, s, i_); }
     if (cur() == '{') { i_++; return make(TokenKind::LBrace, s, i_); }
     if (cur() == '}') { i_++; return make(TokenKind::RBrace, s, i_); }
+
+    // Operators
     if (cur() == '=') { i_++; return make(TokenKind::Assign, s, i_); }
-    
+    if (cur() == '+') { i_++; return make(TokenKind::Plus, s, i_); }
+    if (cur() == '*') { i_++; return make(TokenKind::Star, s, i_); }
+    if (cur() == '/') { i_++; return make(TokenKind::Slash, s, i_); }
+    if (cur() == '%') { i_++; return make(TokenKind::Percent, s, i_); }
+    if (cur() == '<') { i_++; return make(TokenKind::Less, s, i_); }
+    if (cur() == '>') { i_++; return make(TokenKind::Greater, s, i_); }
+
+    // '-' is either a negative number or a minus operator
+    if (cur() == '-') {
+        if (std::isdigit((unsigned char)peek(1))) return number();
+        i_++;
+        return make(TokenKind::Minus, s, i_);
+    }
+
     i_++; // Safety advance
     return make(TokenKind::Invalid, s, i_);
 }

@@ -24,21 +24,37 @@ static std::string safe_id(const std::string& node, const std::string& handle) {
     return node + "__" + handle;
 }
 
-static void scan_stmts_for_edges(const std::vector<Stmt>& stmts, 
-                                 const std::string& current_node_name, 
-                                 std::ostream& os) {
-    for (const auto& stmt : stmts) {
-        if (std::holds_alternative<PublishStmt>(stmt)) {
-            const auto& pub = std::get<PublishStmt>(stmt);
-            std::string topic_id = safe_id(current_node_name, pub.topic_handle);
-            os << "    " << current_node_name << " -> " << topic_id << " [color=blue];\n";
-        }
-        else if (std::holds_alternative<RequestStmt>(stmt)) {
-            const auto& req = std::get<RequestStmt>(stmt);
-            os << "    " << current_node_name << " -> " << req.target_node 
-               << " [style=dashed, label=\"" << req.func_name << "\"];\n";
-        }
+static void scan_stmts_for_edges(const std::vector<StmtPtr>& stmts,
+                                 const std::string& current_node_name,
+                                 std::ostream& os);
+
+static void scan_stmt_for_edges(const StmtPtr& sp,
+                                const std::string& current_node_name,
+                                std::ostream& os) {
+    if (!sp) return;
+
+    if (auto pub = std::get_if<PublishStmt>(&sp->v)) {
+        std::string topic_id = safe_id(current_node_name, pub->topic_handle);
+        os << "    " << current_node_name << " -> " << topic_id << " [color=blue];\n";
+        return;
     }
+    if (auto req = std::get_if<RequestStmt>(&sp->v)) {
+        os << "    " << current_node_name << " -> " << req->target_node
+           << " [style=dashed, label=\"" << req->func_name << "\"];\n";
+        return;
+    }
+    if (auto ifs = std::get_if<IfStmt>(&sp->v)) {
+        scan_stmts_for_edges(ifs->then_body, current_node_name, os);
+        for (const auto& br : ifs->elifs) scan_stmts_for_edges(br.body, current_node_name, os);
+        scan_stmts_for_edges(ifs->else_body, current_node_name, os);
+        return;
+    }
+}
+
+static void scan_stmts_for_edges(const std::vector<StmtPtr>& stmts,
+                                 const std::string& current_node_name,
+                                 std::ostream& os) {
+    for (const auto& sp : stmts) scan_stmt_for_edges(sp, current_node_name, os);
 }
 
 // ---------------------------------------------------------

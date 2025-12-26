@@ -1,62 +1,180 @@
 systemMode Startup
 systemMode Active
 
-/* Active Mission Test: Automated Startup Sequence
-   This script is designed to trigger a chain reaction across all nodes.
+/* Conditional + expression test.
+   Goals:
+   - if / elif / else blocks
+   - comparisons: == != < <= > >=
+   - boolean ops: and or not
+   - precedence + parentheses
+   - arithmetic: + - * / %
+   - nested ifs
 */
 
 node controller CommandCenter : GroundControl
-  topic heartbeat = "sys/hb" : int
   topic system_ready = "sys/ready" : bool
 
   onRequest activate() -> bool
-    log info "Activating System Phase: Startup"
+    log info "CommandCenter.activate()"
     transition system "Startup"
-    return true
-
-  onRequest goLive() -> bool
-    log warn "System GO LIVE"
-    transition system "Active"
     return true
 
 node SensorArray : DataCollector
   topic reading = "sense/val" : float
-  
+  topic ok = "sense/ok" : bool
+
   onListen CommandCenter.system_ready do beginSampling()
 
   func beginSampling(ready: bool) -> bool
-    log "Sensors online. Starting sampling..."
-    reading.publish(42.0)
+    log info "SensorArray.beginSampling() ready={ready}"
+
+    // Publish a value so LoggerNode can see something too
+    reading.publish(47.0)
+
+    // ---- Conditionals start here ----
+
+    // 1) Basic bool literal / not
+    if true:
+      log debug "if true: PASS"
+    else:
+      log error "if true: FAIL"
+
+    if not false:
+      log debug "if not false: PASS"
+    else:
+      log error "if not false: FAIL"
+
+    // 2) Identifier bool + not
+    if ready:
+      log info "ready is true"
+    else:
+      log warn "ready is false (unexpected in this script)"
+
+    if not ready:
+      log error "not ready branch should not run"
+    else:
+      log debug "not ready correctly skipped"
+
+    // 3) Comparisons on numbers
+    if 1 < 2:
+      log debug "1 < 2 PASS"
+    else:
+      log error "1 < 2 FAIL"
+
+    if 2 <= 2:
+      log debug "2 <= 2 PASS"
+    else:
+      log error "2 <= 2 FAIL"
+
+    if 3 > 4:
+      log error "3 > 4 should be false"
+    else:
+      log debug "3 > 4 correctly false"
+
+    if 5 >= 5:
+      log debug "5 >= 5 PASS"
+    else:
+      log error "5 >= 5 FAIL"
+
+    // 4) Equality / inequality
+    if 10 == 10:
+      log debug "10 == 10 PASS"
+    else:
+      log error "10 == 10 FAIL"
+
+    if 10 != 11:
+      log debug "10 != 11 PASS"
+    else:
+      log error "10 != 11 FAIL"
+
+    // 5) Boolean operators and/or + precedence
+    // (and should bind tighter than or; parentheses should override)
+    if true or false and false:
+      log debug "true or (false and false) => true PASS"
+    else:
+      log error "precedence test 1 FAIL"
+
+    if (true or false) and false:
+      log error "(true or false) and false should be FALSE (this branch should not run)"
+    else:
+      log debug "(true or false) and false correctly evaluated to false"
+
+    // 6) not binding tight
+    if not true or true:
+      log debug "(not true) or true => true PASS"
+    else:
+      log error "not precedence test FAIL"
+
+    // 7) Arithmetic in conditions
+    if (2 + 3) * 4 == 20:
+      log debug "(2+3)*4 == 20 PASS"
+    else:
+      log error "(2+3)*4 == 20 FAIL"
+
+    if 21 / 2 > 10:
+      log debug "21/2 > 10 PASS (integer or float division depends on your typing)"
+    else:
+      log warn "21/2 > 10 was false (check division semantics)"
+
+    if 7 % 3 == 1:
+      log debug "7 % 3 == 1 PASS"
+    else:
+      log error "7 % 3 == 1 FAIL"
+
+    // 8) Nested if + elif/else chain
+    if ready and (47.0 > 40.0):
+      log info "ready and reading high -> entering nested test"
+      if 1 == 2:
+        log error "nested: impossible branch"
+      else:
+        log debug "nested: else branch PASS"
+    elif ready and (47.0 <= 40.0):
+      log error "elif: shouldn't hit (47 <= 40 false)"
+    else:
+      log error "else: shouldn't hit (ready true and 47>40 true)"
+
+    // 9) Exercise elif chain deterministically
+    if 3 < 0:
+      log error "elif-chain: branch 1 should not run"
+    elif 3 < 2:
+      log error "elif-chain: branch 2 should not run"
+    elif 3 == 3:
+      log info "elif-chain: branch 3 PASS (3 == 3)"
+    else:
+      log error "elif-chain: else should not run"
+
+    // Optional: publish a boolean result as a sanity marker
+    ok.publish(true)
+
+    transition "Done"
     return true
 
 node LoggerNode : DataRecorder ignore system
-  topic disk_status = "disk/stat" : string
-
   onListen SensorArray.reading do recordData()
+  onListen SensorArray.ok do recordOk()
 
   func recordData(val: float) -> bool
-    print "DISK RECORD: {val}"
+    print "Logger saw reading: {val}"
     return true
 
-// --- Startup Sequence Logic ---
+  func recordOk(v: bool) -> bool
+    log info "Logger saw ok={v}"
+    return true
 
 mode CommandCenter->Init
-  log "Initializing CommandCenter..."
-  // This kicks off the whole app
+  log "Init: kicking off test"
+  system_ready.publish(true)
   request CommandCenter.activate()
 
 mode CommandCenter->Startup
-  log "CommandCenter in Startup. Signaling sensors..."
-  system_ready.publish(true)
-  request CommandCenter.goLive()
+  log "Startup mode entered"
+  transition system "Active"
 
 mode SensorArray->Active
-  log error "This is a test"
-  log warn "This is a test"
-  log info "This is a test"
-  log debug "This is a test"
-  log "SensorArray detected Active system state."
-  print "Sampling at high frequency..."
+  log info "SensorArray sees system Active"
+
+mode SensorArray->"Done"
+  log warn "SensorArray finished conditional tests"
 
 mode LoggerNode->Init
-  disk_status.publish("READY")
+  log debug "LoggerNode init"

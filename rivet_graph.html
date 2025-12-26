@@ -21,59 +21,40 @@
   edge [fontname="Arial", fontsize=10];
   graph [style=filled, fillcolor="#eeeeee"];
 
-  subgraph cluster_FlightCore {
-    label = "FlightCore : Autopilot";
+  subgraph cluster_CommandCenter {
+    label = "CommandCenter : GroundControl";
     style = rounded;
     color = black;
     bgcolor = white;
-    FlightCore [label="FlightCore", shape=component, fillcolor="#d0e0ff"];
-    FlightCore__state [label="sys/state\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    FlightCore__altitude [label="nav/alt\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    FlightCore__battery [label="pwr/volts\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter [label="CommandCenter", shape=component, fillcolor="#d0e0ff"];
+    CommandCenter__heartbeat [label="sys/hb\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    CommandCenter__system_ready [label="sys/ready\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
 
-  subgraph cluster_Perception {
-    label = "Perception : LidarScanner";
+  subgraph cluster_SensorArray {
+    label = "SensorArray : DataCollector";
     style = rounded;
     color = black;
     bgcolor = white;
-    Perception [label="Perception", shape=component, fillcolor="#d0e0ff"];
-    Perception__distance [label="sense/dist\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    Perception__object_detected [label="sense/obj\n<bool>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    SensorArray [label="SensorArray", shape=component, fillcolor="#d0e0ff"];
+    SensorArray__reading [label="sense/val\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
 
-  subgraph cluster_Motors {
-    label = "Motors : ESCController";
+  subgraph cluster_LoggerNode {
+    label = "LoggerNode : DataRecorder";
     style = rounded;
     color = black;
     bgcolor = white;
-    Motors [label="Motors", shape=component, fillcolor="#d0e0ff"];
-    Motors__rpm [label="act/speed\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-    Motors__temp [label="act/temp\n<float>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
+    LoggerNode [label="LoggerNode", shape=component, fillcolor="#d0e0ff"];
+    LoggerNode__disk_status [label="disk/stat\n<string>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
   }
-
-  subgraph cluster_BlackBox {
-    label = "BlackBox : SDCard";
-    style = rounded;
-    color = black;
-    bgcolor = white;
-    BlackBox [label="BlackBox", shape=component, fillcolor="#d0e0ff"];
-    BlackBox__storage_used [label="sys/disk\n<int>", shape=ellipse, style=filled, fillcolor="#ddffdd"];
-  }
-    FlightCore -> FlightCore__altitude [color=blue];
-  FlightCore__altitude -> Perception [color=green];
-    Perception -> Perception__distance [color=blue];
-    Motors -> Motors__rpm [color=blue];
-    Motors -> Motors__rpm [color=blue];
-    Motors -> Motors__rpm [color=blue];
-  FlightCore__state -> BlackBox [color=green];
-    FlightCore -> FlightCore__battery [color=blue];
-    FlightCore -> FlightCore__state [color=blue];
-    Motors -> BlackBox [style=dashed, label="flush"];
-    Motors -> Motors [style=dashed, label="spin"];
-    Motors -> Motors [style=dashed, label="spin"];
-    Motors -> Motors [style=dashed, label="spin"];
-    FlightCore -> Perception [style=dashed, label="scan"];
+  CommandCenter__system_ready -> SensorArray [color=green];
+    SensorArray -> SensorArray__reading [color=blue];
+  SensorArray__reading -> LoggerNode [color=green];
+    CommandCenter -> CommandCenter [style=dashed, label="activate"];
+    CommandCenter -> CommandCenter__system_ready [color=blue];
+    CommandCenter -> CommandCenter [style=dashed, label="goLive"];
+    LoggerNode -> LoggerNode__disk_status [color=blue];
 }
 `;
         var viz = new Viz();

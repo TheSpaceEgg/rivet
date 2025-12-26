@@ -1,7 +1,9 @@
 #pragma once
 #include "source.hpp"
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -9,7 +11,7 @@ enum class ValType { Int, Float, String, Bool, Custom };
 
 struct TypeInfo {
     ValType base = ValType::Int;
-    std::string custom_name; 
+    std::string custom_name;
 };
 
 struct Param {
@@ -25,15 +27,47 @@ struct SystemModeDecl {
 
 struct TopicDecl {
     SourceLoc loc{};
-    std::string name; 
-    std::string path; 
+    std::string name;
+    std::string path;
     TypeInfo type;
 };
+
+// ----------------------------
+// Expressions
+// ----------------------------
+
+enum class UnaryOp { Neg, Not };
+enum class BinaryOp {
+    Add, Sub, Mul, Div, Mod,
+    Eq, Neq, Lt, Lte, Gt, Gte,
+    And, Or
+};
+
+struct Expr;
+using ExprPtr = std::shared_ptr<Expr>;
+
+struct Expr {
+    struct Literal {
+        enum class Kind { Int, Float, String, Bool };
+        Kind kind = Kind::Int;
+        std::string text; // token text (strings include quotes)
+    };
+    struct Ident { std::string name; };
+    struct Unary { UnaryOp op{}; ExprPtr rhs; };
+    struct Binary { BinaryOp op{}; ExprPtr lhs; ExprPtr rhs; };
+
+    SourceLoc loc{};
+    std::variant<Literal, Ident, Unary, Binary> v = Literal{};
+};
+
+// ----------------------------
+// Statements
+// ----------------------------
 
 struct CallStmt {
     SourceLoc loc{};
     std::string callee;
-    std::vector<std::string> args; 
+    std::vector<std::string> args;
 };
 
 struct RequestStmt {
@@ -46,8 +80,8 @@ struct RequestStmt {
 
 struct PublishStmt {
     SourceLoc loc{};
-    std::string topic_handle; 
-    std::string value; 
+    std::string topic_handle;
+    std::string value;
 };
 
 struct ReturnStmt {
@@ -57,7 +91,7 @@ struct ReturnStmt {
 
 struct TransitionStmt {
     SourceLoc loc{};
-    bool is_system = false;     
+    bool is_system = false;
     std::string target_state;
 };
 
@@ -66,50 +100,73 @@ enum class LogLevel { Print, Info, Warn, Error, Debug };
 struct LogStmt {
     SourceLoc loc{};
     LogLevel level = LogLevel::Info;
-    // Args are preserved as raw strings; codegen handles the {interpolation}
     std::vector<std::string> args;
 };
 
-using Stmt = std::variant<CallStmt, RequestStmt, PublishStmt, ReturnStmt, TransitionStmt, LogStmt>;
+struct Stmt;
+using StmtPtr = std::shared_ptr<Stmt>;
+
+struct IfElifBranch {
+    SourceLoc loc{};
+    ExprPtr cond;
+    std::vector<StmtPtr> body;
+};
+
+struct IfStmt {
+    SourceLoc loc{};
+    ExprPtr cond;
+    std::vector<StmtPtr> then_body;
+    std::vector<IfElifBranch> elifs;
+    std::vector<StmtPtr> else_body;
+};
+
+struct Stmt {
+    SourceLoc loc{};
+    std::variant<CallStmt, RequestStmt, PublishStmt, ReturnStmt, TransitionStmt, LogStmt, IfStmt> v;
+};
+
+// ----------------------------
+// Declarations
+// ----------------------------
 
 struct FuncSignature {
     SourceLoc loc{};
     std::string name;
     std::vector<Param> params;
-    TypeInfo return_type; 
+    TypeInfo return_type;
 };
 
 struct FuncDecl {
     FuncSignature sig;
-    std::vector<Stmt> body;
+    std::vector<StmtPtr> body;
 };
 
 struct OnRequestDecl {
     FuncSignature sig;
-    std::vector<Stmt> body;
-    std::string delegate_to; 
+    std::vector<StmtPtr> body;
+    std::string delegate_to;
 };
 
 struct OnListenDecl {
     SourceLoc loc{};
-    std::string source_node; 
-    std::string topic_name;  
-    std::string delegate_to; 
+    std::string source_node;
+    std::string topic_name;
+    std::string delegate_to;
     FuncSignature sig;
-    std::vector<Stmt> body;
+    std::vector<StmtPtr> body;
 };
 
 struct NodeDecl {
     SourceLoc loc{};
-    bool is_controller = false;    
-    bool ignores_system = false;   
+    bool is_controller = false;
+    bool ignores_system = false;
     std::string name;
     std::string type_name;
     std::string config_text;
-    std::vector<TopicDecl> topics;        
-    std::vector<OnRequestDecl> requests;  
-    std::vector<OnListenDecl> listeners; 
-    std::vector<FuncDecl> private_funcs; 
+    std::vector<TopicDecl> topics;
+    std::vector<OnRequestDecl> requests;
+    std::vector<OnListenDecl> listeners;
+    std::vector<FuncDecl> private_funcs;
 };
 
 struct ModeName {
@@ -120,11 +177,10 @@ struct ModeName {
 
 struct ModeDecl {
     SourceLoc loc{};
-    bool ignores_system = false;   
+    bool ignores_system = false;
     std::string node_name;
     ModeName mode_name;
-    std::vector<Stmt> body;
-    // Updated: Mode bodies can now contain scoped listeners
+    std::vector<StmtPtr> body;
     std::vector<OnListenDecl> listeners;
 };
 
